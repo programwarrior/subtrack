@@ -1,4 +1,4 @@
-const CACHE = "subtrack-v5";
+const CACHE = "subtrack-v6";
 const BASE = new URL(self.registration.scope).pathname.replace(/\/$/, "");
 const CORE = [`${BASE}/`, `${BASE}/manifest.webmanifest`, `${BASE}/icon.svg`];
 self.addEventListener("install", (event) => event.waitUntil(Promise.all([caches.open(CACHE).then((cache) => cache.addAll(CORE)), self.skipWaiting()])));

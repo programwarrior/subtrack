@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { User } from "@supabase/supabase-js";
 import { appUrl } from "@/lib/base-path";
-import { accountDataSignature, hasAccountData, mergeAccountData, normalizeAppData, type CloudAccountRow } from "@/lib/cloud-account";
+import { accountDataSignature, mergeAccountData, normalizeAppData, type CloudAccountRow } from "@/lib/cloud-account";
 import { wouldBlockMassDeletion } from "@/lib/sync-merge";
 import { getSupabase, supabaseConfigured } from "@/lib/supabase";
 import type { AppData } from "@/lib/types";
@@ -16,7 +16,7 @@ export function useCloudAccount({ data, enabled, onApply, onNotify }: { data: Ap
   const [user, setUser] = useState<User | null>(null); const [status, setStatus] = useState<CloudAccountStatus>(supabaseConfigured ? "checking" : "off");
   const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null); const [migration, setMigration] = useState<CloudMigrationChoice | null>(null);
   const [errorMessage, setErrorMessage] = useState(""); const [connected, setConnected] = useState(false);
-  const dataRef = useRef(data); const versionRef = useRef(0); const syncInFlight = useRef(false); const initializedUser = useRef<string | null>(null);
+  const dataRef = useRef(data); const versionRef = useRef(0); const syncInFlight = useRef(false); const syncQueued = useRef(false); const initializedUser = useRef<string | null>(null);
   useEffect(() => { dataRef.current = data; }, [data]);
 
   const deviceKey = useCallback((userId: string) => `subtrack:cloud-ready:${userId}`, []);
@@ -39,10 +39,10 @@ export function useCloudAccount({ data, enabled, onApply, onNotify }: { data: Ap
     if (!supabase || !user) throw new Error("Sign in first.");
     if (!existing) {
       const { data: created, error } = await supabase.from("account_state").insert({ user_id: user.id, payload: next, version: 1 }).select("user_id,payload,version,updated_at").single();
-      if (error) throw error; return created as CloudAccountRow;
+      if (error) throw new Error(error.code === "23505" ? "Cloud data changed while syncing. Please retry." : error.message); return created as CloudAccountRow;
     }
     const { data: updated, error } = await supabase.from("account_state").update({ payload: next, version: existing.version + 1, updated_at: new Date().toISOString() }).eq("user_id", user.id).eq("version", existing.version).select("user_id,payload,version,updated_at").maybeSingle();
-    if (error) throw error; if (!updated) throw new Error("Cloud data changed while syncing. Please retry."); return updated as CloudAccountRow;
+    if (error) throw new Error(error.message); if (!updated) throw new Error("Cloud data changed while syncing. Please retry."); return updated as CloudAccountRow;
   }, [supabase, user]);
 
   const finishConnection = useCallback((row: CloudAccountRow) => {
@@ -50,12 +50,16 @@ export function useCloudAccount({ data, enabled, onApply, onNotify }: { data: Ap
   }, [deviceKey, user]);
 
   const syncNow = useCallback(async () => {
-    if (!supabase || !user || !connected || syncInFlight.current) return;
+    if (!supabase || !user || !connected) return;
+    if (syncInFlight.current) { syncQueued.current = true; return; }
     syncInFlight.current = true; setStatus("syncing");
     try {
       for (let attempt = 0; attempt < 2; attempt += 1) {
         const row = await fetchRow(); const local = dataRef.current;
-        if (!row) { const created = await writeExact(local, null); finishConnection(created); return; }
+        if (!row) {
+          try { const created = await writeExact(local, null); finishConnection(created); return; }
+          catch (error) { if (attempt === 1 || !(error instanceof Error && error.message.includes("changed while syncing"))) throw error; continue; }
+        }
         const cloud = normalizeAppData(row.payload);
         if (wouldBlockMassDeletion(cloud, local)) {
           apply(cloud); versionRef.current = row.version; setLastSyncedAt(row.updated_at); fail("Cloud sync blocked a bulk deletion and restored the account copy."); return;
@@ -66,7 +70,13 @@ export function useCloudAccount({ data, enabled, onApply, onNotify }: { data: Ap
         catch (error) { if (attempt === 1 || !(error instanceof Error && error.message.includes("changed while syncing"))) throw error; }
       }
     } catch (error) { fail(error instanceof Error ? error.message : "Cloud sync failed."); }
-    finally { syncInFlight.current = false; }
+    finally {
+      syncInFlight.current = false;
+      if (syncQueued.current) {
+        syncQueued.current = false;
+        window.setTimeout(() => void syncNow(), 0);
+      }
+    }
   }, [apply, connected, fail, fetchRow, finishConnection, supabase, user, writeExact]);
 
   const inspectAccount = useCallback(async (nextUser: User) => {
@@ -74,13 +84,10 @@ export function useCloudAccount({ data, enabled, onApply, onNotify }: { data: Ap
     try {
       const { data: rowData, error } = await supabase.from("account_state").select("user_id,payload,version,updated_at").eq("user_id", nextUser.id).maybeSingle();
       if (error) { const setup = error.code === "42P01" || /account_state|schema cache/i.test(error.message); fail(setup ? "Database setup is required before account sync can start." : error.message, setup); return; }
-      const row = rowData as CloudAccountRow | null; const cloud = normalizeAppData(row?.payload); versionRef.current = row?.version ?? 0;
-      if (!localStorage.getItem(deviceKey(nextUser.id))) {
-        setMigration({ cloud, cloudVersion: row?.version ?? 0, cloudExists: Boolean(row && hasAccountData(cloud)) }); setStatus("choose"); return;
-      }
-      setConnected(true); setStatus("synced"); if (row) setLastSyncedAt(row.updated_at);
+      const row = rowData as CloudAccountRow | null; versionRef.current = row?.version ?? 0;
+      setMigration(null); setConnected(true); setStatus("syncing"); if (row) setLastSyncedAt(row.updated_at);
     } catch (error) { fail(error instanceof Error ? error.message : "Could not inspect cloud data."); }
-  }, [deviceKey, enabled, fail, supabase]);
+  }, [enabled, fail, supabase]);
 
   useEffect(() => {
     if (!supabase) return;
@@ -100,6 +107,14 @@ export function useCloudAccount({ data, enabled, onApply, onNotify }: { data: Ap
     window.addEventListener("online", sync); window.addEventListener("focus", sync);
     return () => { window.clearInterval(interval); window.removeEventListener("online", sync); window.removeEventListener("focus", sync); };
   }, [connected, syncNow]);
+  useEffect(() => {
+    if (!connected || !supabase || !user) return;
+    const channel = supabase.channel(`account-state-${user.id}`).on("postgres_changes", { event: "*", schema: "public", table: "account_state", filter: `user_id=eq.${user.id}` }, (payload) => {
+      const nextVersion = Number((payload.new as { version?: number }).version ?? 0);
+      if (!nextVersion || nextVersion > versionRef.current) void syncNow();
+    }).subscribe();
+    return () => { void supabase.removeChannel(channel); };
+  }, [connected, supabase, syncNow, user]);
 
   const chooseCloud = useCallback(async () => {
     if (!migration || !user) return; setStatus("syncing");
