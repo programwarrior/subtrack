@@ -3,7 +3,7 @@
 import { AlertCircle, CheckCircle2, FileSpreadsheet, FileText, Image as ImageIcon, LoaderCircle, ScanLine, Trash2, Upload } from "lucide-react";
 import { useRef, useState } from "react";
 import { categories, frequencies, type BillingFrequency, type Subscription } from "@/lib/types";
-import { candidateToSubscription, consolidateImportCandidates, parseDocumentText, parseSpreadsheetRows, subscriptionMatchKey, type SmartImportCandidate } from "@/lib/smart-import";
+import { candidateToSubscription, consolidateImportCandidates, parseDocumentText, parseImageReceiptText, parseSpreadsheetRows, subscriptionMatchKey, type SmartImportCandidate } from "@/lib/smart-import";
 import { frequencyLabel, formatMoney } from "@/lib/calculations";
 
 type AddInput = ReturnType<typeof candidateToSubscription>;
@@ -33,7 +33,7 @@ async function extractPdf(file: File, currency: string, progress: (value: number
 async function extractImage(file: File, currency: string, progress: (value: number, label: string) => void): Promise<SmartImportCandidate[]> {
   const { createWorker } = await import("tesseract.js");
   const worker = await createWorker("eng", undefined, { logger: (message) => { if (typeof message.progress === "number") progress(message.progress, message.status === "recognizing text" ? "Reading text in image" : "Preparing image reader"); } });
-  try { const result = await worker.recognize(file); return parseDocumentText(result.data.text, currency, file.name); }
+  try { const result = await worker.recognize(file); return parseImageReceiptText(result.data.text, currency, file.name); }
   finally { await worker.terminate(); }
 }
 
@@ -61,6 +61,8 @@ export function SmartImport({ currency, existingSubscriptions, onImport, onClose
   };
   const update = (id: string, patch: Partial<SmartImportCandidate>) => setCandidates((current) => current.map((item) => item.id === id ? { ...item, ...patch } : item));
   const selected = candidates.filter((item) => item.selected && item.name.trim() && item.price > 0 && item.nextPaymentDate);
+  const recordedPaymentCount = candidates.reduce((sum, item) => sum + (item.chargeCount ?? item.payments?.length ?? (item.paymentDate ? 1 : 0)), 0);
+  const reviewHeading = `${candidates.length} subscription${candidates.length === 1 ? "" : "s"}${recordedPaymentCount ? ` and ${recordedPaymentCount} payment${recordedPaymentCount === 1 ? "" : "s"}` : ""} found`;
   return <div className="smart-import-body">
     {phase === "upload" && <>
       <button type="button" className={`import-dropzone ${dragging ? "dragging" : ""}`} onClick={() => fileRef.current?.click()} onDragOver={(event) => { event.preventDefault(); setDragging(true); }} onDragLeave={() => setDragging(false)} onDrop={(event) => { event.preventDefault(); setDragging(false); void processFiles([...event.dataTransfer.files]); }}>
@@ -72,7 +74,7 @@ export function SmartImport({ currency, existingSubscriptions, onImport, onClose
     </>}
     {phase === "processing" && <div className="import-processing"><span className="processing-icon"><LoaderCircle size={29} /></span><h3>Finding subscriptions…</h3><p>{progressLabel}</p><div className="progress-track"><span style={{ width: `${Math.max(6, progress * 100)}%` }} /></div><small>Images can take a little longer while text is recognized.</small></div>}
     {phase === "review" && <>
-      <div className="review-summary"><div><span className="import-icon small"><CheckCircle2 size={18} /></span><div><strong>{candidates.length} subscription{candidates.length === 1 ? "" : "s"} found</strong><p>Repeated charges are grouped together. Check the details before saving.</p></div></div><button className="button secondary compact" onClick={() => { setPhase("upload"); setCandidates([]); setError(""); }}>Choose other files</button></div>
+      <div className="review-summary"><div><span className="import-icon small"><CheckCircle2 size={18} /></span><div><strong>{reviewHeading}</strong><p>Repeated charges from the same provider are grouped into its payment history. Check the details before saving.</p></div></div><button className="button secondary compact" onClick={() => { setPhase("upload"); setCandidates([]); setError(""); }}>Choose other files</button></div>
       {error && <div className="import-error-box"><AlertCircle size={17} /><span>{error}</span></div>}
       <div className="candidate-list">{candidates.map((item) => <article className={`candidate-card ${!item.selected ? "unselected" : ""}`} key={item.id}>
         <label className="candidate-check"><input type="checkbox" checked={item.selected} onChange={(event) => update(item.id, { selected: event.target.checked })} /><span className={`confidence ${item.confidence}`}>{item.confidence} confidence</span></label>

@@ -50,7 +50,7 @@ test("groups repeated imported charges into one subscription", async ({ page }) 
     mimeType: "text/csv",
     buffer: Buffer.from("Name,Price,Currency,Billing frequency,Payment date,Category\nNetflix,10,EUR,monthly,2026-05-01,Entertainment\nNETFLIX.COM,14,EUR,monthly,2026-06-01,Entertainment"),
   });
-  await expect(page.getByText("1 subscription found")).toBeVisible();
+  await expect(page.getByText("1 subscription and 2 payments found")).toBeVisible();
   await expect(page.getByText(/2 recorded charges/)).toBeVisible();
   await page.getByRole("button", { name: "Import 1 subscription" }).click();
   await expect(page.getByRole("article").filter({ hasText: "Netflix" })).toHaveCount(1);

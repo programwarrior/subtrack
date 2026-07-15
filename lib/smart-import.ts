@@ -127,6 +127,7 @@ export function parseSpreadsheetRows(rows: unknown[][], fallbackCurrency = "EUR"
   if (!meaningful.length) return [];
   const normalizedHeaders = meaningful[0].map(normalize);
   const columns = Object.fromEntries(Object.entries(headerAliases).map(([key, aliases]) => [key, findColumn(normalizedHeaders, aliases)])) as Record<keyof typeof headerAliases, number>;
+  if (columns.paymentDate === columns.nextDate && columns.paymentDate >= 0 && normalizedHeaders[columns.paymentDate] !== "date") columns.paymentDate = -1;
   const hasHeaders = columns.name >= 0 && columns.price >= 0;
   const dataRows = hasHeaders ? meaningful.slice(1) : meaningful;
   return dataRows.flatMap((row, index) => {
@@ -142,7 +143,7 @@ export function parseSpreadsheetRows(rows: unknown[][], fallbackCurrency = "EUR"
 }
 
 function cleanMerchant(raw: string): string {
-  return raw.replace(/\b(?:monthly|weekly|yearly|annual(?:ly)?|quarterly|subscription|renewal|recurring|payment|paid|due|debit|credit)\b/gi, " ").replace(/\b\d{1,2}[/.]\d{1,2}(?:[/.]\d{2,4})?\b/g, " ").replace(/[|•*#:_-]+/g, " ").replace(/\s+/g, " ").trim();
+  return raw.replace(/\b(?:monthly|weekly|yearly|annual(?:ly)?|quarterly|subscription|renewal|recurring|payment|paid|due|debit|credit|transaction|merchant|details?|successful(?:ly)?)\b/gi, " ").replace(/\b\d{1,2}[/.]\d{1,2}(?:[/.]\d{2,4})?\b/g, " ").replace(/[|•*#:_-]+/g, " ").replace(/\s+/g, " ").trim();
 }
 
 export function parseDocumentText(text: string, fallbackCurrency = "EUR", source = "Document"): SmartImportCandidate[] {
@@ -167,6 +168,66 @@ export function parseDocumentText(text: string, fallbackCurrency = "EUR", source
     results.push(candidate({ name, price: parsed.amount, currency: parsed.currency, billingFrequency: frequency, nextPaymentDate: normalizedDate.date, paymentDate, source, warnings, confidence: hasRecurringWord && !normalizedDate.inferred ? "high" : knownVendor ? "medium" : "low" }));
   }
   return results.slice(0, 100);
+}
+
+function receiptDate(lines: string[]): string | null {
+  const prioritized = [...lines.filter((line) => /\b(?:transaction|payment|paid|charged|date|renewal)\b/i.test(line)), ...lines];
+  for (const line of prioritized) {
+    const match = line.match(/\b\d{4}-\d{2}-\d{2}\b|\b\d{1,2}[/.]\d{1,2}[/.]\d{2,4}\b|\b\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{2,4}\b/i);
+    const parsed = parseDateValue(match?.[0] ?? "");
+    if (parsed) return parsed;
+  }
+  return null;
+}
+
+function receiptMerchant(lines: string[]): string {
+  const known = lines.find((line) => recurringVendors.some((vendor) => normalize(line).includes(vendor)));
+  if (known) return cleanMerchant(known).slice(0, 80);
+  const labelledIndex = lines.findIndex((line) => /\b(?:merchant|payee|provider|seller|billed by|charged by|paid to)\b/i.test(line));
+  if (labelledIndex >= 0) {
+    const labelled = cleanMerchant(lines[labelledIndex]).slice(0, 80);
+    if (labelled.length >= 2) return labelled;
+    const following = cleanMerchant(lines[labelledIndex + 1] ?? "").slice(0, 80);
+    if (following.length >= 2 && /[a-z]{2}/i.test(following)) return following;
+  }
+  const plausible = lines.find((line) => {
+    const cleaned = cleanMerchant(line);
+    return cleaned.length >= 2 && cleaned.length <= 80 && /[a-z]{2}/i.test(cleaned) && !/^(?:amount|total|subtotal|tax|vat|date|time|status|receipt|invoice|order|card|bank|thank you)$/i.test(cleaned) && !/(?:https?:\/\/|www\.|@)/i.test(cleaned) && !parseMoney(cleaned);
+  });
+  return cleanMerchant(plausible ?? "").slice(0, 80);
+}
+
+function receiptMoney(lines: string[], fallbackCurrency: string): { amount: number; currency: string } | null {
+  const labelledIndexes = lines.map((line, index) => /\b(?:amount|paid|charged|charge|total)\b/i.test(line) ? index : -1).filter((index) => index >= 0);
+  for (const index of [...labelledIndexes].reverse()) {
+    const parsed = parseMoney(`${lines[index]} ${lines[index + 1] ?? ""}`, fallbackCurrency);
+    if (parsed?.amount) return parsed;
+  }
+  for (const line of lines) {
+    if (/\b(?:date|time|invoice|order|reference)\b/i.test(line) || /\b\d{4}-\d{2}-\d{2}\b|\b\d{1,2}[/.]\d{1,2}[/.]\d{2,4}\b/.test(line)) continue;
+    const parsed = parseMoney(line, fallbackCurrency);
+    if (parsed?.amount) return parsed;
+  }
+  return null;
+}
+
+export function parseImageReceiptText(text: string, fallbackCurrency = "EUR", source = "Receipt image"): SmartImportCandidate[] {
+  const lines = text.split(/\n+/).map((line) => line.trim()).filter((line) => line.length > 1);
+  if (!lines.length) return [];
+  const direct = parseDocumentText(text, fallbackCurrency, source);
+  const contextualDate = receiptDate(lines);
+  if (direct.length) {
+    if (direct.length !== 1 || !contextualDate) return direct;
+    const item = direct[0]; const paymentDate = contextualDate <= todayDateOnly() ? contextualDate : item.paymentDate;
+    return [{ ...item, paymentDate, firstPaymentDate: paymentDate, nextPaymentDate: paymentDate ? nextRenewalFromCharge(paymentDate, item.billingFrequency) : contextualDate, warnings: item.warnings.filter((warning) => warning !== "Next payment date was estimated.") }];
+  }
+  const name = receiptMerchant(lines); const money = receiptMoney(lines, fallbackCurrency);
+  if (!name || !money || money.amount <= 0) return [];
+  const frequency = inferFrequency(text); const paymentDate = contextualDate && contextualDate <= todayDateOnly() ? contextualDate : contextualDate ? undefined : todayDateOnly();
+  const nextPaymentDate = paymentDate ? nextRenewalFromCharge(paymentDate, frequency) : contextualDate ?? nextDefault(frequency);
+  const recurringClue = /week|month|quarter|annual|year|subscription|renewal|recurring/i.test(text); const knownVendor = recurringVendors.some((vendor) => normalize(name).includes(vendor));
+  const warnings = [...(!recurringClue ? ["Billing frequency was estimated as monthly."] : []), ...(!contextualDate ? ["Payment date was estimated as today."] : []), ...(!knownVendor && !recurringClue ? ["Provider was inferred from the receipt; please review the name."] : [])];
+  return [candidate({ name, price: money.amount, currency: money.currency, billingFrequency: frequency, nextPaymentDate, paymentDate, firstPaymentDate: paymentDate, source, note: `Imported payment from ${source}`, warnings, confidence: knownVendor || recurringClue ? "medium" : "low" })];
 }
 
 export function consolidateImportCandidates(items: SmartImportCandidate[]): SmartImportCandidate[] {
