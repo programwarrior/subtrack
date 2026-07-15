@@ -2,8 +2,8 @@
 
 import { AlertCircle, CheckCircle2, FileSpreadsheet, FileText, Image as ImageIcon, LoaderCircle, ScanLine, Trash2, Upload } from "lucide-react";
 import { useRef, useState } from "react";
-import { categories, frequencies, type BillingFrequency } from "@/lib/types";
-import { candidateToSubscription, parseDocumentText, parseSpreadsheetRows, type SmartImportCandidate } from "@/lib/smart-import";
+import { categories, frequencies, type BillingFrequency, type Subscription } from "@/lib/types";
+import { candidateToSubscription, consolidateImportCandidates, parseDocumentText, parseSpreadsheetRows, subscriptionMatchKey, type SmartImportCandidate } from "@/lib/smart-import";
 import { frequencyLabel, formatMoney } from "@/lib/calculations";
 
 type AddInput = ReturnType<typeof candidateToSubscription>;
@@ -37,7 +37,7 @@ async function extractImage(file: File, currency: string, progress: (value: numb
   finally { await worker.terminate(); }
 }
 
-export function SmartImport({ currency, existingNames, onImport, onClose }: { currency: string; existingNames: string[]; onImport: (items: AddInput[]) => void; onClose: () => void }) {
+export function SmartImport({ currency, existingSubscriptions, onImport, onClose }: { currency: string; existingSubscriptions: Subscription[]; onImport: (items: AddInput[]) => void; onClose: () => void }) {
   const fileRef = useRef<HTMLInputElement>(null); const [candidates, setCandidates] = useState<SmartImportCandidate[]>([]); const [phase, setPhase] = useState<"upload" | "processing" | "review">("upload");
   const [progress, setProgress] = useState(0); const [progressLabel, setProgressLabel] = useState(""); const [error, setError] = useState(""); const [dragging, setDragging] = useState(false);
   const processFiles = async (files: File[]) => {
@@ -53,8 +53,8 @@ export function SmartImport({ currency, existingNames, onImport, onClose }: { cu
         else throw new Error(`${file.name} is not a supported file type.`);
         found.push(...items);
       }
-      const names = new Set(existingNames.map((name) => name.toLowerCase()));
-      const reviewed = found.map((item) => names.has(item.name.toLowerCase()) ? { ...item, selected: false, warnings: [...item.warnings, "A subscription with this name already exists."] } : item);
+      const existing = new Map(existingSubscriptions.map((item) => [subscriptionMatchKey(item.name), item.name]));
+      const reviewed = consolidateImportCandidates(found).map((item) => { const match = existing.get(subscriptionMatchKey(item.name)); return match ? { ...item, warnings: [...item.warnings, `Charges will be added to the existing ${match} subscription.`] } : item; });
       setCandidates(reviewed); setProgress(1); setPhase("review");
       if (!reviewed.length) setError("No clear recurring subscriptions were found. Try a statement with merchant, amount, and billing-cycle details, or use a spreadsheet with Name and Price columns.");
     } catch (reason) { setError(reason instanceof Error ? reason.message : "The files could not be read."); setPhase("upload"); }
@@ -72,13 +72,13 @@ export function SmartImport({ currency, existingNames, onImport, onClose }: { cu
     </>}
     {phase === "processing" && <div className="import-processing"><span className="processing-icon"><LoaderCircle size={29} /></span><h3>Finding subscriptions…</h3><p>{progressLabel}</p><div className="progress-track"><span style={{ width: `${Math.max(6, progress * 100)}%` }} /></div><small>Images can take a little longer while text is recognized.</small></div>}
     {phase === "review" && <>
-      <div className="review-summary"><div><span className="import-icon small"><CheckCircle2 size={18} /></span><div><strong>{candidates.length} possible subscription{candidates.length === 1 ? "" : "s"} found</strong><p>Check the details and deselect anything that is not recurring.</p></div></div><button className="button secondary compact" onClick={() => { setPhase("upload"); setCandidates([]); setError(""); }}>Choose other files</button></div>
+      <div className="review-summary"><div><span className="import-icon small"><CheckCircle2 size={18} /></span><div><strong>{candidates.length} subscription{candidates.length === 1 ? "" : "s"} found</strong><p>Repeated charges are grouped together. Check the details before saving.</p></div></div><button className="button secondary compact" onClick={() => { setPhase("upload"); setCandidates([]); setError(""); }}>Choose other files</button></div>
       {error && <div className="import-error-box"><AlertCircle size={17} /><span>{error}</span></div>}
       <div className="candidate-list">{candidates.map((item) => <article className={`candidate-card ${!item.selected ? "unselected" : ""}`} key={item.id}>
         <label className="candidate-check"><input type="checkbox" checked={item.selected} onChange={(event) => update(item.id, { selected: event.target.checked })} /><span className={`confidence ${item.confidence}`}>{item.confidence} confidence</span></label>
         <button className="candidate-remove" aria-label={`Remove ${item.name}`} onClick={() => setCandidates((current) => current.filter((candidate) => candidate.id !== item.id))}><Trash2 size={16} /></button>
         <div className="candidate-fields"><label className="field"><span>Name</span><input value={item.name} onChange={(event) => update(item.id, { name: event.target.value })} /></label><label className="field"><span>Price</span><div className="input-prefix"><span>{item.currency}</span><input type="number" min="0" step="0.01" value={item.price} onChange={(event) => update(item.id, { price: Number(event.target.value) })} /></div></label><label className="field"><span>Billing</span><select value={item.billingFrequency} onChange={(event) => update(item.id, { billingFrequency: event.target.value as BillingFrequency })}>{frequencies.map((frequency) => <option value={frequency} key={frequency}>{frequencyLabel(frequency)}</option>)}</select></label><label className="field"><span>Next payment</span><input type="date" value={item.nextPaymentDate} onChange={(event) => update(item.id, { nextPaymentDate: event.target.value })} /></label><label className="field"><span>Category</span><select value={item.category} onChange={(event) => update(item.id, { category: event.target.value })}>{categories.map((category) => <option key={category}>{category}</option>)}</select></label></div>
-        <div className="candidate-meta"><span>{formatMoney(item.price, item.currency)} · {item.source}</span>{item.warnings.length > 0 && <span className="candidate-warning"><AlertCircle size={13} /> {item.warnings.join(" ")}</span>}</div>
+        <div className="candidate-meta"><span>{formatMoney(item.price, item.currency)} · {item.chargeCount ? `${item.chargeCount} recorded charge${item.chargeCount === 1 ? "" : "s"} · ` : ""}{item.source}</span>{item.warnings.length > 0 && <span className="candidate-warning"><AlertCircle size={13} /> {item.warnings.join(" ")}</span>}</div>
       </article>)}</div>
       <div className="modal-actions import-actions"><button className="button secondary" onClick={onClose}>Cancel</button><button className="button primary" disabled={!selected.length} onClick={() => onImport(selected.map(candidateToSubscription))}><Upload size={17} /> Import {selected.length || ""} subscription{selected.length === 1 ? "" : "s"}</button></div>
     </>}

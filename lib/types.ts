@@ -18,6 +18,7 @@ export interface PriceChange {
   newPrice: number;
   effectiveDate: string;
   note?: string;
+  paymentId?: string;
 }
 
 export interface Subscription {

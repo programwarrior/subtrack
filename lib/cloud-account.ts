@@ -11,7 +11,7 @@ export interface CloudAccountRow {
 export function normalizeAppData(value: unknown): AppData {
   const input = value && typeof value === "object" ? value as Partial<AppData> : {};
   return {
-    subscriptions: Array.isArray(input.subscriptions) ? input.subscriptions : [],
+    subscriptions: Array.isArray(input.subscriptions) ? input.subscriptions.map((item) => ({ ...item, payments: Array.isArray(item.payments) ? item.payments : [], priceHistory: Array.isArray(item.priceHistory) ? item.priceHistory : [] })) : [],
     settings: { ...defaultSettings, ...(input.settings ?? {}) },
     tombstones: input.tombstones && typeof input.tombstones === "object" ? input.tombstones : {},
     deletedSubscriptions: Array.isArray(input.deletedSubscriptions) ? input.deletedSubscriptions : [],

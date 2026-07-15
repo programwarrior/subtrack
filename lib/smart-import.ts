@@ -1,5 +1,6 @@
 import { calculateNextPaymentDate, todayDateOnly, toDateOnly } from "./calculations";
-import { categories, frequencies, type BillingFrequency, type Subscription } from "./types";
+import { reconcilePaymentPriceHistory } from "./payment-history";
+import { categories, frequencies, type BillingFrequency, type Payment, type PriceChange, type Subscription } from "./types";
 
 export type ImportConfidence = "high" | "medium" | "low";
 
@@ -16,6 +17,11 @@ export interface SmartImportCandidate {
   confidence: ImportConfidence;
   warnings: string[];
   source: string;
+  paymentDate?: string;
+  firstPaymentDate?: string;
+  payments?: Payment[];
+  priceHistory?: PriceChange[];
+  chargeCount?: number;
 }
 
 const headerAliases = {
@@ -23,7 +29,8 @@ const headerAliases = {
   price: ["price", "amount", "cost", "charge", "payment"],
   currency: ["currency", "currency code", "ccy"],
   frequency: ["billing frequency", "frequency", "billing cycle", "cycle", "renewal"],
-  date: ["next payment date", "next payment", "renewal date", "date", "due date"],
+  nextDate: ["next payment date", "next payment", "renewal date", "due date"],
+  paymentDate: ["payment date", "transaction date", "charged date", "charge date", "date"],
   category: ["category", "type"],
   note: ["note", "notes", "memo", "description"],
 } as const;
@@ -33,6 +40,12 @@ const recurringVendors = ["netflix", "spotify", "adobe", "amazon prime", "youtub
 function uid(): string { return typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`; }
 function normalize(value: unknown): string { return String(value ?? "").trim().toLowerCase().replace(/[_-]+/g, " ").replace(/\s+/g, " "); }
 function findColumn(headers: string[], aliases: readonly string[]): number { return headers.findIndex((header) => aliases.some((alias) => header === alias || header.includes(alias))); }
+
+export function subscriptionMatchKey(name: string): string {
+  const text = normalize(name).replace(/[^a-z0-9 ]+/g, " ").replace(/\s+/g, " ").trim();
+  const known = recurringVendors.find((vendor) => text.includes(vendor));
+  return known ?? text.replace(/\b(?:com|ltd|limited|inc|invoice|receipt|payment|subscription|renewal)\b/g, " ").replace(/\s+/g, " ").trim();
+}
 
 export function inferFrequency(value: unknown): BillingFrequency {
   const text = normalize(value);
@@ -76,8 +89,8 @@ function nextDefault(frequency: BillingFrequency): string {
   const today = todayDateOnly(); return calculateNextPaymentDate(today, frequency);
 }
 
-export function normalizeDate(value: unknown, frequency: BillingFrequency): { date: string; inferred: boolean } {
-  if (value instanceof Date && !Number.isNaN(value.getTime())) return { date: toDateOnly(value), inferred: false };
+export function parseDateValue(value: unknown): string | null {
+  if (value instanceof Date && !Number.isNaN(value.getTime())) return toDateOnly(value);
   const text = String(value ?? "").trim();
   let date: Date | null = null;
   if (/^\d{4}-\d{2}-\d{2}/.test(text)) date = new Date(`${text.slice(0, 10)}T12:00:00`);
@@ -86,8 +99,20 @@ export function normalizeDate(value: unknown, frequency: BillingFrequency): { da
     if (numeric) { const year = Number(numeric[3]) < 100 ? 2000 + Number(numeric[3]) : Number(numeric[3]); date = new Date(year, Number(numeric[2]) - 1, Number(numeric[1]), 12); }
     else { const parsed = Date.parse(text); if (!Number.isNaN(parsed)) date = new Date(parsed); }
   }
-  if (!date || Number.isNaN(date.getTime())) return { date: nextDefault(frequency), inferred: true };
-  let normalized = toDateOnly(date); let guard = 0;
+  return date && !Number.isNaN(date.getTime()) ? toDateOnly(date) : null;
+}
+
+function nextRenewalFromCharge(date: string, frequency: BillingFrequency): string {
+  if (frequency === "one-time") return date;
+  let next = calculateNextPaymentDate(date, frequency); let guard = 0;
+  while (next <= todayDateOnly() && guard++ < 240) next = calculateNextPaymentDate(next, frequency);
+  return next;
+}
+
+export function normalizeDate(value: unknown, frequency: BillingFrequency): { date: string; inferred: boolean } {
+  const parsed = parseDateValue(value);
+  if (!parsed) return { date: nextDefault(frequency), inferred: true };
+  let normalized = parsed; let guard = 0;
   while (normalized < todayDateOnly() && frequency !== "one-time" && guard++ < 120) normalized = calculateNextPaymentDate(normalized, frequency);
   return { date: normalized, inferred: false };
 }
@@ -109,9 +134,10 @@ export function parseSpreadsheetRows(rows: unknown[][], fallbackCurrency = "EUR"
     const name = String(nameValue ?? "").trim(); const money = parseMoney(priceValue, hasHeaders && columns.currency >= 0 ? String(row[columns.currency] || fallbackCurrency) : fallbackCurrency);
     if (!name || !money || money.amount <= 0) return [];
     const frequency = inferFrequency(hasHeaders && columns.frequency >= 0 ? row[columns.frequency] : "monthly");
-    const normalizedDate = normalizeDate(hasHeaders && columns.date >= 0 ? row[columns.date] : "", frequency);
+    const paymentDate = hasHeaders && columns.paymentDate >= 0 ? parseDateValue(row[columns.paymentDate]) ?? undefined : undefined;
+    const normalizedDate = hasHeaders && columns.nextDate >= 0 ? normalizeDate(row[columns.nextDate], frequency) : paymentDate ? { date: nextRenewalFromCharge(paymentDate, frequency), inferred: false } : normalizeDate("", frequency);
     const warnings = [...(!hasHeaders ? ["Column names were not found; the first two columns were treated as name and price."] : []), ...(normalizedDate.inferred ? ["Next payment date was estimated."] : [])];
-    return [candidate({ name, price: money.amount, currency: money.currency, billingFrequency: frequency, nextPaymentDate: normalizedDate.date, category: hasHeaders && columns.category >= 0 ? String(row[columns.category] || "") : inferCategory(name), note: hasHeaders && columns.note >= 0 ? String(row[columns.note] || "Imported from spreadsheet") : `Imported from ${source}, row ${index + (hasHeaders ? 2 : 1)}`, warnings, confidence: !hasHeaders || normalizedDate.inferred ? "medium" : "high", source })];
+    return [candidate({ name, price: money.amount, currency: money.currency, billingFrequency: frequency, nextPaymentDate: normalizedDate.date, paymentDate, category: hasHeaders && columns.category >= 0 ? String(row[columns.category] || "") : inferCategory(name), note: hasHeaders && columns.note >= 0 ? String(row[columns.note] || "Imported from spreadsheet") : `Imported from ${source}, row ${index + (hasHeaders ? 2 : 1)}`, warnings, confidence: !hasHeaders || normalizedDate.inferred ? "medium" : "high", source })];
   });
 }
 
@@ -132,15 +158,32 @@ export function parseDocumentText(text: string, fallbackCurrency = "EUR", source
     name = name.replace(/^\d{4,}\s+/, "").slice(0, 80).trim();
     if (name.length < 2 || /^\d+$/.test(name)) continue;
     const frequency = inferFrequency(line); const dateMatch = line.match(/\b\d{4}-\d{2}-\d{2}\b|\b\d{1,2}[/.]\d{1,2}[/.]\d{2,4}\b|\b\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{2,4}\b/i);
-    const normalizedDate = normalizeDate(dateMatch?.[0] ?? "", frequency);
+    const parsedDate = parseDateValue(dateMatch?.[0] ?? ""); const explicitCharge = /\b(?:paid|charged|charge|debit|transaction|card)\b/i.test(line); const imageReceipt = /\.(?:png|jpe?g|webp)$/i.test(source);
+    const paymentDate = parsedDate && (parsedDate <= todayDateOnly() || explicitCharge) ? parsedDate : imageReceipt && !parsedDate ? todayDateOnly() : undefined;
+    const normalizedDate = paymentDate ? { date: nextRenewalFromCharge(paymentDate, frequency), inferred: !parsedDate } : normalizeDate(parsedDate ?? "", frequency);
     const hasRecurringWord = /week|month|quarter|annual|year|subscription|renewal|recurring/i.test(line); const knownVendor = recurringVendors.some((vendor) => normalize(name).includes(vendor));
     if (!hasRecurringWord && !knownVendor) continue;
     const warnings = [...(!hasRecurringWord ? ["Billing frequency was estimated as monthly."] : []), ...(normalizedDate.inferred ? ["Next payment date was estimated."] : [])];
-    results.push(candidate({ name, price: parsed.amount, currency: parsed.currency, billingFrequency: frequency, nextPaymentDate: normalizedDate.date, source, warnings, confidence: hasRecurringWord && !normalizedDate.inferred ? "high" : knownVendor ? "medium" : "low" }));
+    results.push(candidate({ name, price: parsed.amount, currency: parsed.currency, billingFrequency: frequency, nextPaymentDate: normalizedDate.date, paymentDate, source, warnings, confidence: hasRecurringWord && !normalizedDate.inferred ? "high" : knownVendor ? "medium" : "low" }));
   }
-  return results.filter((item, index, all) => all.findIndex((other) => normalize(other.name) === normalize(item.name) && other.price === item.price) === index).slice(0, 100);
+  return results.slice(0, 100);
+}
+
+export function consolidateImportCandidates(items: SmartImportCandidate[]): SmartImportCandidate[] {
+  const groups = new Map<string, SmartImportCandidate[]>();
+  items.forEach((item) => { const key = `${subscriptionMatchKey(item.name)}|${item.currency}`; groups.set(key, [...(groups.get(key) ?? []), item]); });
+  return [...groups.values()].map((group) => {
+    const dated = group.flatMap((item) => item.payments?.length ? item.payments : item.paymentDate ? [{ id: `import-payment-${item.id}`, paymentDate: item.paymentDate, amount: item.price, status: "paid" as const, note: `Imported from ${item.source}` }] : []);
+    const payments = dated.filter((payment, index, all) => all.findIndex((other) => other.paymentDate === payment.paymentDate && other.amount === payment.amount && other.status === payment.status) === index).sort((a, b) => a.paymentDate.localeCompare(b.paymentDate) || a.id.localeCompare(b.id));
+    const latest = payments.at(-1); const base = latest ? group.find((item) => item.paymentDate === latest.paymentDate && item.price === latest.amount) ?? group.at(-1)! : group.at(-1)!;
+    const warnings = [...new Set(group.flatMap((item) => item.warnings))];
+    if (group.length > 1) warnings.push(`${group.length} charges were grouped into one subscription.`);
+    return { ...base, name: group[0].name, price: latest?.amount ?? base.price, nextPaymentDate: latest ? nextRenewalFromCharge(latest.paymentDate, base.billingFrequency) : base.nextPaymentDate, firstPaymentDate: payments.at(0)?.paymentDate, payments, priceHistory: reconcilePaymentPriceHistory([], payments), chargeCount: payments.length, warnings };
+  });
 }
 
 export function candidateToSubscription(candidate: SmartImportCandidate): Partial<Subscription> & Pick<Subscription, "name" | "price" | "billingFrequency" | "nextPaymentDate"> {
-  return { name: candidate.name, price: candidate.price, currency: candidate.currency, billingFrequency: candidate.billingFrequency, nextPaymentDate: candidate.nextPaymentDate, category: categories.includes(candidate.category) ? candidate.category : "Other", note: candidate.note, status: "active", autoRenewalStatus: "unknown", reminderDaysBefore: 3 };
+  const payments = (candidate.payments ?? []).map((payment) => ({ ...payment })); const latest = payments.length ? payments.reduce((current, payment) => payment.paymentDate >= current.paymentDate ? payment : current) : null;
+  if (latest) latest.amount = candidate.price;
+  return { name: candidate.name, price: candidate.price, currency: candidate.currency, billingFrequency: candidate.billingFrequency, nextPaymentDate: candidate.nextPaymentDate, firstPaymentDate: candidate.firstPaymentDate, payments, priceHistory: reconcilePaymentPriceHistory(candidate.priceHistory ?? [], payments), category: categories.includes(candidate.category) ? candidate.category : "Other", note: candidate.note, status: "active", autoRenewalStatus: "unknown", reminderDaysBefore: 3 };
 }

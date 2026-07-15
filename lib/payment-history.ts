@@ -8,6 +8,32 @@ export function normalizePriceHistory(history: PriceChange[]): PriceChange[] {
   return sorted.map((change) => { const normalized = { ...change, previousPrice: previous }; previous = change.newPrice; return normalized; });
 }
 
+export function confirmedPayments(payments: Payment[]): Payment[] {
+  return payments.filter((payment) => payment.status !== "estimated").sort((a, b) => a.paymentDate.localeCompare(b.paymentDate) || a.id.localeCompare(b.id));
+}
+
+export function priceChangesFromPayments(payments: Payment[]): PriceChange[] {
+  const paid = confirmedPayments(payments).filter((payment) => payment.status === "paid");
+  if (paid.length < 2) return [];
+  let previous = paid[0].amount;
+  return paid.slice(1).flatMap((payment) => {
+    if (payment.amount === previous) return [];
+    const change: PriceChange = { id: `payment-price-${payment.id}`, paymentId: payment.id, previousPrice: previous, newPrice: payment.amount, effectiveDate: payment.paymentDate, note: "Renewal amount updated from a recorded charge" };
+    previous = payment.amount;
+    return [change];
+  });
+}
+
+export function reconcilePaymentPriceHistory(history: PriceChange[], payments: Payment[]): PriceChange[] {
+  const manual = history.filter((change) => !change.paymentId);
+  const inferred = priceChangesFromPayments(payments).filter((change) => !manual.some((item) => item.effectiveDate === change.effectiveDate && item.newPrice === change.newPrice));
+  return normalizePriceHistory([...manual, ...inferred]);
+}
+
+export function recordedSpend(payments: Payment[]): number {
+  return confirmedPayments(payments).filter((payment) => payment.status === "paid").reduce((total, payment) => total + payment.amount, 0);
+}
+
 export function priceAtDate(subscription: Pick<Subscription, "price" | "priceHistory">, date: string): number {
   const history = normalizePriceHistory(subscription.priceHistory);
   if (!history.length) return subscription.price;
@@ -17,7 +43,7 @@ export function priceAtDate(subscription: Pick<Subscription, "price" | "priceHis
 }
 
 export function buildEstimatedPaymentHistory(subscription: Subscription, today = todayDateOnly()): Payment[] {
-  const confirmed = subscription.payments.filter((payment) => payment.status !== "estimated");
+  const confirmed = confirmedPayments(subscription.payments);
   if (!subscription.firstPaymentDate || subscription.firstPaymentDate >= subscription.nextPaymentDate) return confirmed.sort((a, b) => b.paymentDate.localeCompare(a.paymentDate));
   const confirmedDates = new Set(confirmed.flatMap((payment) => [payment.paymentDate, payment.scheduledDate].filter(Boolean) as string[])); const estimated: Payment[] = [];
   let paymentDate = subscription.firstPaymentDate; let guard = 0;

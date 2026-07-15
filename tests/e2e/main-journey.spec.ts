@@ -18,7 +18,7 @@ test("adds, pauses, records payment, and deletes a subscription", async ({ page 
   await expect(page.getByRole("dialog").getByText("paused", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Resume" }).click();
   await page.getByRole("button", { name: "Mark as paid" }).click();
-  await expect(page.getByRole("dialog").getByText("Paid", { exact: true })).toBeVisible();
+  await expect(page.getByRole("dialog").getByText("paid", { exact: true })).toBeVisible();
   page.on("dialog", (dialog) => dialog.accept());
   await page.getByRole("button", { name: "Delete subscription" }).click();
   await expect(page.getByRole("article").filter({ hasText: "Readwise" })).toHaveCount(0);
@@ -38,9 +38,34 @@ test("reviews and imports subscriptions from a spreadsheet file", async ({ page 
     mimeType: "text/csv",
     buffer: Buffer.from("Name,Price,Currency,Billing frequency,Next payment date,Category\nReadwise,9.99,EUR,monthly,2026-08-15,Education"),
   });
-  await expect(page.getByText("1 possible subscription found")).toBeVisible();
+  await expect(page.getByText("1 subscription found")).toBeVisible();
   await page.getByRole("button", { name: "Import 1 subscription" }).click();
   await expect(page.getByRole("article").filter({ hasText: "Readwise" })).toBeVisible();
+});
+
+test("groups repeated imported charges into one subscription", async ({ page }) => {
+  await page.getByRole("button", { name: "Smart import" }).first().click();
+  await page.locator('input[type="file"]').setInputFiles({
+    name: "statement.csv",
+    mimeType: "text/csv",
+    buffer: Buffer.from("Name,Price,Currency,Billing frequency,Payment date,Category\nNetflix,10,EUR,monthly,2026-05-01,Entertainment\nNETFLIX.COM,14,EUR,monthly,2026-06-01,Entertainment"),
+  });
+  await expect(page.getByText("1 subscription found")).toBeVisible();
+  await expect(page.getByText(/2 recorded charges/)).toBeVisible();
+  await page.getByRole("button", { name: "Import 1 subscription" }).click();
+  await expect(page.getByRole("article").filter({ hasText: "Netflix" })).toHaveCount(1);
+  await page.getByRole("article").filter({ hasText: "Netflix" }).click();
+  await expect(page.getByRole("dialog").getByText("paid", { exact: true })).toHaveCount(2);
+  await expect(page.getByText("€14.00", { exact: true }).first()).toBeVisible();
+  await page.getByRole("button", { name: "Close" }).click();
+  await page.getByRole("button", { name: "Smart import" }).first().click();
+  await page.locator('input[type="file"]').setInputFiles({ name: "new-charge.csv", mimeType: "text/csv", buffer: Buffer.from("Name,Price,Currency,Billing frequency,Payment date\nNetflix,16,EUR,monthly,2026-07-01") });
+  await expect(page.getByText(/Charges will be added to the existing .* subscription/)).toBeVisible();
+  await page.getByRole("button", { name: "Import 1 subscription" }).click();
+  await expect(page.getByRole("article").filter({ hasText: "Netflix" })).toHaveCount(1);
+  await page.getByRole("article").filter({ hasText: "Netflix" }).click();
+  await expect(page.getByRole("dialog").getByText("paid", { exact: true })).toHaveCount(3);
+  await expect(page.getByText("€16.00", { exact: true }).first()).toBeVisible();
 });
 
 test("shows safe account login without device pairing", async ({ page }) => {
@@ -83,4 +108,9 @@ test("builds past payment history and records a dated price change", async ({ pa
 
   await expect(page.getByText("Upgraded to the family plan")).toBeVisible();
   await expect(page.getByText(/Changed from/)).toBeVisible();
+  await expect(page.getByText("€18.00", { exact: true }).first()).toBeVisible();
+  await page.getByRole("button", { name: "Edit payment from 2026-07-15" }).click();
+  await page.getByLabel("Amount charged").fill("22");
+  await page.getByRole("button", { name: "Save payment" }).click();
+  await expect(page.getByText("€22.00", { exact: true }).first()).toBeVisible();
 });

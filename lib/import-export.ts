@@ -1,4 +1,5 @@
 import { createSubscription } from "@/hooks/use-subscriptions";
+import { renewalPrice } from "./calculations";
 import type { Subscription } from "./types";
 import { frequencies } from "./types";
 
@@ -10,7 +11,7 @@ function escapeCsv(value: unknown): string {
 }
 
 export function subscriptionsToCsv(items: Subscription[]): string {
-  const rows = items.map((item) => [item.name, item.price, item.currency, item.billingFrequency, item.nextPaymentDate, item.firstPaymentDate ?? "", item.category, item.reminderDaysBefore ?? "", item.note, item.status, item.websiteUrl]);
+  const rows = items.map((item) => [item.name, renewalPrice(item), item.currency, item.billingFrequency, item.nextPaymentDate, item.firstPaymentDate ?? "", item.category, item.reminderDaysBefore ?? "", item.note, item.status, item.websiteUrl]);
   return [headers, ...rows].map((row) => row.map(escapeCsv).join(",")).join("\n");
 }
 

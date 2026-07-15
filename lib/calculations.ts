@@ -22,8 +22,23 @@ export function daysUntil(value: string, today = todayDateOnly()): number {
   return Math.round((parseDateOnly(value).getTime() - parseDateOnly(today).getTime()) / MS_DAY);
 }
 
-export function yearlyEquivalent(subscription: Pick<Subscription, "price" | "billingFrequency" | "customIntervalNumber" | "customIntervalUnit">): number {
-  const { price, billingFrequency: frequency } = subscription;
+type RenewalCalculationInput = Pick<Subscription, "price" | "billingFrequency" | "customIntervalNumber" | "customIntervalUnit"> & Partial<Pick<Subscription, "payments" | "priceHistory">>;
+
+export function renewalPrice(subscription: Pick<Subscription, "price"> & Partial<Pick<Subscription, "payments" | "priceHistory">>): number {
+  let amount = subscription.price;
+  let latestDate = "";
+  [...(subscription.payments ?? [])].filter((payment) => payment.status === "paid").sort((a, b) => a.paymentDate.localeCompare(b.paymentDate) || a.id.localeCompare(b.id)).forEach((payment) => {
+    if (payment.paymentDate >= latestDate) { latestDate = payment.paymentDate; amount = payment.amount; }
+  });
+  [...(subscription.priceHistory ?? [])].sort((a, b) => a.effectiveDate.localeCompare(b.effectiveDate) || a.id.localeCompare(b.id)).forEach((change) => {
+    if (change.effectiveDate >= latestDate) { latestDate = change.effectiveDate; amount = change.newPrice; }
+  });
+  return amount;
+}
+
+export function yearlyEquivalent(subscription: RenewalCalculationInput): number {
+  const price = subscription.payments && subscription.priceHistory ? renewalPrice({ price: subscription.price, payments: subscription.payments, priceHistory: subscription.priceHistory }) : subscription.price;
+  const frequency = subscription.billingFrequency;
   const multiplier: Partial<Record<BillingFrequency, number>> = {
     weekly: 52, monthly: 12, bimonthly: 6, quarterly: 4, biannual: 2, yearly: 1, "one-time": 0,
   };
@@ -33,7 +48,7 @@ export function yearlyEquivalent(subscription: Pick<Subscription, "price" | "bil
   return price * (custom[subscription.customIntervalUnit ?? "months"] ?? 0);
 }
 
-export function monthlyEquivalent(subscription: Pick<Subscription, "price" | "billingFrequency" | "customIntervalNumber" | "customIntervalUnit">): number {
+export function monthlyEquivalent(subscription: RenewalCalculationInput): number {
   return yearlyEquivalent(subscription) / 12;
 }
 

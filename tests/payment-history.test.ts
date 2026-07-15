@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createSubscription } from "@/hooks/use-subscriptions";
-import { buildEstimatedPaymentHistory, normalizePriceHistory, priceAtDate } from "@/lib/payment-history";
+import { buildEstimatedPaymentHistory, normalizePriceHistory, priceAtDate, reconcilePaymentPriceHistory, recordedSpend } from "@/lib/payment-history";
 
 describe("historical payment tracking", () => {
   it("creates estimated renewals from the first payment date", () => {
@@ -23,5 +23,11 @@ describe("historical payment tracking", () => {
   it("relinks previous prices when a change is inserted in the middle", () => {
     const history = normalizePriceHistory([{ id: "a", previousPrice: 10, newPrice: 15, effectiveDate: "2026-01-01" }, { id: "c", previousPrice: 15, newPrice: 20, effectiveDate: "2026-06-01" }, { id: "b", previousPrice: 15, newPrice: 18, effectiveDate: "2026-03-01", note: "Mid-year change" }]);
     expect(history.map((item) => [item.previousPrice, item.newPrice])).toEqual([[10, 15], [15, 18], [18, 20]]);
+  });
+  it("turns changing recorded charges into dated price history and actual spend", () => {
+    const payments = [{ id: "one", paymentDate: "2026-01-01", amount: 10, status: "paid" as const }, { id: "two", paymentDate: "2026-02-01", amount: 14, status: "paid" as const }, { id: "estimate", paymentDate: "2026-03-01", amount: 14, status: "estimated" as const }];
+    const history = reconcilePaymentPriceHistory([], payments);
+    expect(history).toHaveLength(1); expect(history[0]).toMatchObject({ previousPrice: 10, newPrice: 14, effectiveDate: "2026-02-01", paymentId: "two" });
+    expect(recordedSpend(payments)).toBe(24);
   });
 });

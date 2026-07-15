@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { inferCategory, normalizeDate, parseDocumentText, parseMoney, parseSpreadsheetRows } from "@/lib/smart-import";
+import { candidateToSubscription, consolidateImportCandidates, inferCategory, normalizeDate, parseDocumentText, parseMoney, parseSpreadsheetRows } from "@/lib/smart-import";
 
 describe("smart document import", () => {
   it("extracts recurring services from statement text", () => {
@@ -11,4 +11,11 @@ describe("smart document import", () => {
     expect(items[0]).toMatchObject({ name: "Spotify", price: 11.99, nextPaymentDate: "2026-08-20", confidence: "high" });
   });
   it("supports locale money and inferred metadata", () => { expect(parseMoney("€ 1.299,50")).toEqual({ amount: 1299.5, currency: "EUR" }); expect(inferCategory("Netflix Premium")).toBe("Entertainment"); expect(normalizeDate("", "yearly").inferred).toBe(true); });
+  it("groups differently priced charges for one merchant into one subscription", () => {
+    const base = { selected: true, currency: "EUR", billingFrequency: "monthly" as const, nextPaymentDate: "2026-08-01", category: "Entertainment", note: "Imported", confidence: "high" as const, warnings: [], source: "statement.png" };
+    const grouped = consolidateImportCandidates([{ ...base, id: "one", name: "Netflix", price: 10, paymentDate: "2026-05-01" }, { ...base, id: "two", name: "NETFLIX.COM", price: 14, paymentDate: "2026-06-01" }]);
+    expect(grouped).toHaveLength(1); expect(grouped[0]).toMatchObject({ price: 14, firstPaymentDate: "2026-05-01", chargeCount: 2 });
+    const subscription = candidateToSubscription(grouped[0]);
+    expect(subscription.payments).toHaveLength(2); expect(subscription.priceHistory?.[0]).toMatchObject({ previousPrice: 10, newPrice: 14 });
+  });
 });
