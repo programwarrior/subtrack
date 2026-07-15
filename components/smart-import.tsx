@@ -71,6 +71,7 @@ export function SmartImport({ currency, existingSubscriptions, onImport, onClose
       <input ref={fileRef} className="sr-only" type="file" multiple accept=".pdf,.xlsx,.xls,.csv,.png,.jpg,.jpeg,.webp,application/pdf,image/*" onChange={(event) => void processFiles([...(event.target.files ?? [])])} />
       <div className="privacy-note"><CheckCircle2 size={16} /><p><strong>Private by design</strong><span>Files are read in your browser and are not uploaded to SubTrack. You review every result before it is saved.</span></p></div>
       {error && <div className="import-error-box"><AlertCircle size={17} /><span>{error}</span></div>}
+      <div className="import-start-actions"><button className="button secondary" onClick={onClose}>Cancel</button></div>
     </>}
     {phase === "processing" && <div className="import-processing"><span className="processing-icon"><LoaderCircle size={29} /></span><h3>Finding subscriptions…</h3><p>{progressLabel}</p><div className="progress-track"><span style={{ width: `${Math.max(6, progress * 100)}%` }} /></div><small>Images can take a little longer while text is recognized.</small></div>}
     {phase === "review" && <>

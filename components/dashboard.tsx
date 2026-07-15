@@ -14,7 +14,7 @@ import { SmartImport } from "./smart-import";
 import { PriceChangeForm } from "./price-change-form";
 import { PaymentForm } from "./payment-form";
 
-type ModalState = "add" | "edit" | "details" | "payment-edit" | "price-change" | "settings" | "smart-import" | null;
+type ModalState = "add" | "add-import" | "edit" | "details" | "payment-edit" | "price-change" | "settings" | "smart-import" | null;
 
 function urgencyLabel(days: number): string {
   if (days < 0) return `${Math.abs(days)}d overdue`;
@@ -83,7 +83,8 @@ export function Dashboard() {
       </main>
     </div>
     <button className="fab" onClick={() => setModal("add")} aria-label="Add subscription"><Plus size={22} /></button>
-    <Modal open={modal === "add"} onClose={() => setModal(null)} title="Add subscription" eyebrow="Takes less than 30 seconds"><SubscriptionForm currency={store.settings.currency} defaultReminder={store.settings.defaultReminderDays} onCancel={() => setModal(null)} onSave={(value) => { store.addSubscription(value); setModal(null); setToast("Subscription added."); }} /></Modal>
+    <Modal open={modal === "add"} onClose={() => setModal(null)} title="Add subscription" eyebrow="Enter details or import a file"><SubscriptionForm currency={store.settings.currency} defaultReminder={store.settings.defaultReminderDays} onCancel={() => setModal(null)} onImport={() => setModal("add-import")} onSave={(value) => { store.addSubscription(value); setModal(null); setToast("Subscription added."); }} /></Modal>
+    <Modal open={modal === "add-import"} onClose={() => setModal("add")} title="Add subscription" eyebrow="Read PDF, Excel, CSV or images" wide><SmartImport currency={store.settings.currency} existingSubscriptions={store.subscriptions} onClose={() => setModal("add")} onImport={(items) => { store.importSubscriptions(items); setModal(null); setToast(`${items.length} subscription record${items.length === 1 ? "" : "s"} imported or updated.`); }} /></Modal>
     <Modal open={modal === "edit" && Boolean(selected)} onClose={() => setModal("details")} title={`Edit ${selected?.name ?? "subscription"}`} eyebrow="Subscription details">{selected && <SubscriptionForm initial={selected} currency={store.settings.currency} defaultReminder={store.settings.defaultReminderDays} onCancel={() => setModal("details")} onSave={(value) => { store.updateSubscription(selected.id, value); setModal("details"); setToast("Subscription updated."); }} />}</Modal>
     <Modal open={modal === "details" && Boolean(selected)} onClose={() => setModal(null)} title={selected?.name ?? "Subscription"} eyebrow="Subscription details">{selected && <SubscriptionDetails subscription={selected} settings={store.settings} onEdit={() => setModal("edit")} onEditPayment={(paymentId) => { setSelectedPaymentId(paymentId); setModal("payment-edit"); }} onPriceChange={() => setModal("price-change")} onUpdate={(patch) => { store.updateSubscription(selected.id, patch); setToast("Subscription updated."); }} onPaid={paid} onDelete={() => { store.deleteSubscription(selected.id); setModal(null); setToast("Subscription deleted."); }} />}</Modal>
     <Modal open={modal === "payment-edit" && Boolean(selected && selectedPayment)} onClose={() => setModal("details")} title="Edit past payment" eyebrow={selected?.name}>{selected && selectedPayment && <PaymentForm payment={selectedPayment} subscription={selected} onCancel={() => setModal("details")} onSave={(value) => { store.updatePayment(selected.id, selectedPayment.id, value); setModal("details"); setToast("Payment updated and totals recalculated."); }} />}</Modal>

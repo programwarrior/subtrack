@@ -1,14 +1,14 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { ChevronDown } from "lucide-react";
+import { ChevronDown, FileSpreadsheet, FileText, Image as ImageIcon, ScanLine } from "lucide-react";
 import { categories, frequencies, type Subscription } from "@/lib/types";
 import { subscriptionSchema } from "@/lib/validation";
 import { frequencyLabel, todayDateOnly } from "@/lib/calculations";
 
 type FormValue = Partial<Subscription> & Pick<Subscription, "name" | "price" | "billingFrequency" | "nextPaymentDate">;
 
-export function SubscriptionForm({ initial, currency, defaultReminder, onCancel, onSave }: { initial?: Subscription; currency: string; defaultReminder: number | null; onCancel: () => void; onSave: (value: FormValue) => void }) {
+export function SubscriptionForm({ initial, currency, defaultReminder, onCancel, onSave, onImport }: { initial?: Subscription; currency: string; defaultReminder: number | null; onCancel: () => void; onSave: (value: FormValue) => void; onImport?: () => void }) {
   const [advanced, setAdvanced] = useState(Boolean(initial && (initial.note || initial.paymentMethodLabel || initial.websiteUrl || initial.isFreeTrial)));
   const [customCategory, setCustomCategory] = useState(initial?.category && !categories.includes(initial.category) ? initial.category : "");
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -28,6 +28,7 @@ export function SubscriptionForm({ initial, currency, defaultReminder, onCancel,
   };
   return (
     <form onSubmit={submit} className="subscription-form">
+      {!initial && onImport && <><section className="add-import-option"><span className="import-icon compact"><ScanLine size={20} /></span><div><strong>Read subscription details from a file</strong><p>Extract providers, prices, dates, and past payments for review.</p><span><i><FileText size={13} /> PDF</i><i><FileSpreadsheet size={13} /> Excel / CSV</i><i><ImageIcon size={13} /> Images</i></span></div><button type="button" className="button secondary" onClick={() => { if (!dirty || confirm("Discard your manual entry and import from a file instead?")) onImport(); }}>Choose files</button></section><div className="form-divider"><span>or enter manually</span></div></>}
       <div className="form-grid">
         <label className="field span-2"><span>Name <b>*</b></span><input value={value.name} onChange={(e) => update("name", e.target.value)} placeholder="e.g. Spotify" aria-invalid={Boolean(errors.name)} />{errors.name && <small className="error">{errors.name}</small>}</label>
         <label className="field"><span>Price <b>*</b></span><div className="input-prefix"><span>{currency}</span><input type="number" min="0" step="0.01" value={value.price || ""} onChange={(e) => update("price", Number(e.target.value))} placeholder="0.00" /></div>{errors.price && <small className="error">{errors.price}</small>}</label>

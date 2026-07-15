@@ -24,6 +24,16 @@ test("adds, pauses, records payment, and deletes a subscription", async ({ page 
   await expect(page.getByRole("article").filter({ hasText: "Readwise" })).toHaveCount(0);
 });
 
+test("offers PDF, spreadsheet, and image import inside Add subscription", async ({ page }) => {
+  await page.getByRole("button", { name: "Add subscription" }).first().click();
+  await expect(page.getByText("Read subscription details from a file")).toBeVisible();
+  await expect(page.getByText("Excel / CSV")).toBeVisible();
+  await page.getByRole("button", { name: "Choose files" }).click();
+  await expect(page.getByText("Drop files here or choose files")).toBeVisible();
+  await page.getByRole("button", { name: "Cancel" }).click();
+  await expect(page.getByLabel("Name *")).toBeVisible();
+});
+
 test("loads demo data and filters by name", async ({ page }) => {
   await page.getByRole("button", { name: "Load demo data" }).click();
   await page.getByRole("textbox", { name: "Search subscriptions" }).fill("Spotify");
