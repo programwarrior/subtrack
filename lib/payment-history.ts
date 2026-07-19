@@ -9,7 +9,7 @@ export function normalizePriceHistory(history: PriceChange[]): PriceChange[] {
 }
 
 export function confirmedPayments(payments: Payment[]): Payment[] {
-  return payments.filter((payment) => payment.status !== "estimated").sort((a, b) => a.paymentDate.localeCompare(b.paymentDate) || a.id.localeCompare(b.id));
+  return payments.filter((payment) => payment.status !== "estimated" && /^\d{4}-\d{2}-\d{2}$/.test(payment.paymentDate)).sort((a, b) => a.paymentDate.localeCompare(b.paymentDate) || a.id.localeCompare(b.id));
 }
 
 export function sameImportedSource(left: Payment, right: Payment): boolean {

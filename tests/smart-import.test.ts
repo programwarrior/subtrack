@@ -12,6 +12,7 @@ describe("smart document import", () => {
   });
   it("supports locale money and inferred metadata", () => { expect(parseMoney("€ 1.299,50")).toEqual({ amount: 1299.5, currency: "EUR" }); expect(inferCategory("Netflix Premium")).toBe("Entertainment"); expect(normalizeDate("", "yearly").inferred).toBe(true); });
   it("supports month-first and ordinal receipt dates", () => { expect(parseDateValue("Jul 4th, 2025")).toBe("2025-07-04"); expect(parseDateValue("4-Jul-25")).toBe("2025-07-04"); });
+  it("supports OCR dates with spaces around separators and commas", () => { expect(parseDateValue("04 / 07 / 2025")).toBe("2025-07-04"); expect(parseDateValue("July 4,2025")).toBe("2025-07-04"); });
   it("groups differently priced charges for one merchant into one subscription", () => {
     const base = { selected: true, currency: "EUR", billingFrequency: "monthly" as const, nextPaymentDate: "2026-08-01", category: "Entertainment", note: "Imported", confidence: "high" as const, warnings: [], source: "statement.png" };
     const grouped = consolidateImportCandidates([{ ...base, id: "one", name: "Netflix", price: 10, paymentDate: "2026-05-01" }, { ...base, id: "two", name: "NETFLIX.COM", price: 14, paymentDate: "2026-06-01" }]);
@@ -50,5 +51,14 @@ describe("smart document import", () => {
     const grouped = consolidateImportCandidates(receipts);
     expect(grouped[0].payments?.map((payment) => payment.paymentDate)).toEqual(["2026-05-03", "2026-06-03"]);
     expect(grouped[0].priceHistory?.[0]).toMatchObject({ previousPrice: 10, newPrice: 12, effectiveDate: "2026-06-03" });
+  });
+  it("never silently substitutes today when an image charge date is unreadable", () => {
+    const receipt = parseImageReceiptText("A2 Hosting monthly subscription\nAmount €29.72\nPayment successful", "EUR", "a2-charge.png");
+    expect(receipt[0].paymentDate).toBe("");
+    expect(receipt[0].warnings).toContain("Payment date could not be read. Choose it below before importing.");
+    const grouped = consolidateImportCandidates(receipt);
+    expect(grouped[0].payments).toHaveLength(1);
+    expect(grouped[0].payments?.[0].paymentDate).toBe("");
+    expect(grouped[0].chargeCount).toBe(1);
   });
 });

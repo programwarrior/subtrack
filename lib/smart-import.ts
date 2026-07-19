@@ -94,23 +94,23 @@ export function parseDateValue(value: unknown): string | null {
   if (value instanceof Date && !Number.isNaN(value.getTime())) return toDateOnly(value);
   const text = String(value ?? "").trim().replace(/(\d)(?:st|nd|rd|th)\b/gi, "$1");
   let date: Date | null = null;
-  const iso = text.match(/\b(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})\b/);
+  const iso = text.match(/\b(\d{4})\s*[-/.]\s*(\d{1,2})\s*[-/.]\s*(\d{1,2})\b/);
   if (iso) date = new Date(Number(iso[1]), Number(iso[2]) - 1, Number(iso[3]), 12);
   else {
-    const numeric = text.match(/\b(\d{1,2})[-/.](\d{1,2})[-/.](\d{2,4})\b/);
+    const numeric = text.match(/\b(\d{1,2})\s*[-/.]\s*(\d{1,2})\s*[-/.]\s*(\d{2,4})\b/);
     if (numeric) { const year = Number(numeric[3]) < 100 ? 2000 + Number(numeric[3]) : Number(numeric[3]); date = new Date(year, Number(numeric[2]) - 1, Number(numeric[1]), 12); }
     else { const parsed = Date.parse(text); if (!Number.isNaN(parsed)) date = new Date(parsed); }
   }
   return date && !Number.isNaN(date.getTime()) ? toDateOnly(date) : null;
 }
 
-const receiptDatePattern = /\b\d{4}[-/.]\d{1,2}[-/.]\d{1,2}\b|\b\d{1,2}[-/.]\d{1,2}[-/.]\d{2,4}\b|\b\d{1,2}(?:st|nd|rd|th)?\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*,?\s+\d{2,4}\b|\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{1,2}(?:st|nd|rd|th)?,?\s+\d{2,4}\b/gi;
+const receiptDatePattern = /\b\d{4}\s*[-/.]\s*\d{1,2}\s*[-/.]\s*\d{1,2}\b|\b\d{1,2}\s*[-/.]\s*\d{1,2}\s*[-/.]\s*\d{2,4}\b|\b\d{1,2}(?:st|nd|rd|th)?\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s*,?\s*\d{2,4}\b|\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{1,2}(?:st|nd|rd|th)?\s*,?\s*\d{2,4}\b/gi;
 
 function dateTokens(text: string): string[] {
   return [...text.matchAll(receiptDatePattern)].map((match) => match[0]);
 }
 
-function nextRenewalFromCharge(date: string, frequency: BillingFrequency): string {
+export function nextRenewalFromCharge(date: string, frequency: BillingFrequency): string {
   if (frequency === "one-time") return date;
   let next = calculateNextPaymentDate(date, frequency); let guard = 0;
   while (next <= todayDateOnly() && guard++ < 240) next = calculateNextPaymentDate(next, frequency);
@@ -167,11 +167,11 @@ export function parseDocumentText(text: string, fallbackCurrency = "EUR", source
     name = name.replace(/^\d{4,}\s+/, "").slice(0, 80).trim();
     if (name.length < 2 || /^\d+$/.test(name)) continue;
     const frequency = inferFrequency(line); const parsedDate = parseDateValue(dateTokens(line)[0] ?? ""); const explicitCharge = /\b(?:paid|charged|charge|debit|transaction|card)\b/i.test(line); const imageReceipt = /\.(?:png|jpe?g|webp)$/i.test(source);
-    const paymentDate = parsedDate && (parsedDate <= todayDateOnly() || explicitCharge) ? parsedDate : imageReceipt && !parsedDate ? todayDateOnly() : undefined;
+    const paymentDate = parsedDate && (parsedDate <= todayDateOnly() || explicitCharge) ? parsedDate : imageReceipt && !parsedDate ? "" : undefined;
     const normalizedDate = paymentDate ? { date: nextRenewalFromCharge(paymentDate, frequency), inferred: !parsedDate } : normalizeDate(parsedDate ?? "", frequency);
     const hasRecurringWord = /week|month|quarter|annual|year|subscription|renewal|recurring/i.test(line); const knownVendor = recurringVendors.some((vendor) => normalize(name).includes(vendor));
     if (!hasRecurringWord && !knownVendor) continue;
-    const warnings = [...(!hasRecurringWord ? ["Billing frequency was estimated as monthly."] : []), ...(normalizedDate.inferred ? ["Next payment date was estimated."] : [])];
+    const warnings = [...(!hasRecurringWord ? ["Billing frequency was estimated as monthly."] : []), ...(normalizedDate.inferred ? ["Next payment date was estimated."] : []), ...(imageReceipt && !parsedDate ? ["Payment date could not be read. Choose it below before importing."] : [])];
     results.push(candidate({ name, price: parsed.amount, currency: parsed.currency, billingFrequency: frequency, nextPaymentDate: normalizedDate.date, paymentDate, source, warnings, confidence: hasRecurringWord && !normalizedDate.inferred ? "high" : knownVendor ? "medium" : "low" }));
   }
   return results.slice(0, 100);
@@ -217,7 +217,7 @@ function receiptMoney(lines: string[], fallbackCurrency: string): { amount: numb
     if (parsed?.amount) return parsed;
   }
   for (const line of lines) {
-    if (/\b(?:date|time|invoice|order|reference)\b/i.test(line) || /\b\d{4}-\d{2}-\d{2}\b|\b\d{1,2}[/.]\d{1,2}[/.]\d{2,4}\b/.test(line)) continue;
+    if (/\b(?:date|time|invoice|order|reference)\b/i.test(line) || dateTokens(line).length) continue;
     const parsed = parseMoney(line, fallbackCurrency);
     if (parsed?.amount) return parsed;
   }
@@ -236,10 +236,10 @@ export function parseImageReceiptText(text: string, fallbackCurrency = "EUR", so
   }
   const name = receiptMerchant(lines); const money = receiptMoney(lines, fallbackCurrency);
   if (!name || !money || money.amount <= 0) return [];
-  const frequency = inferFrequency(text); const paymentDate = contextualDate && contextualDate <= todayDateOnly() ? contextualDate : contextualDate ? undefined : todayDateOnly();
+  const frequency = inferFrequency(text); const paymentDate = contextualDate && contextualDate <= todayDateOnly() ? contextualDate : "";
   const nextPaymentDate = paymentDate ? nextRenewalFromCharge(paymentDate, frequency) : contextualDate ?? nextDefault(frequency);
   const recurringClue = /week|month|quarter|annual|year|subscription|renewal|recurring/i.test(text); const knownVendor = recurringVendors.some((vendor) => normalize(name).includes(vendor));
-  const warnings = [...(!recurringClue ? ["Billing frequency was estimated as monthly."] : []), ...(!contextualDate ? ["Payment date was estimated as today."] : []), ...(!knownVendor && !recurringClue ? ["Provider was inferred from the receipt; please review the name."] : [])];
+  const warnings = [...(!recurringClue ? ["Billing frequency was estimated as monthly."] : []), ...(!contextualDate ? ["Payment date could not be read. Choose it below before importing."] : []), ...(!knownVendor && !recurringClue ? ["Provider was inferred from the receipt; please review the name."] : [])];
   return [candidate({ name, price: money.amount, currency: money.currency, billingFrequency: frequency, nextPaymentDate, paymentDate, firstPaymentDate: paymentDate, source, note: `Imported payment from ${source}`, warnings, confidence: knownVendor || recurringClue ? "medium" : "low" })];
 }
 
@@ -247,17 +247,19 @@ export function consolidateImportCandidates(items: SmartImportCandidate[]): Smar
   const groups = new Map<string, SmartImportCandidate[]>();
   items.forEach((item) => { const key = `${subscriptionMatchKey(item.name)}|${item.currency}`; groups.set(key, [...(groups.get(key) ?? []), item]); });
   return [...groups.values()].map((group) => {
-    const dated = group.flatMap((item) => item.payments?.length ? item.payments : item.paymentDate ? [{ id: `import-payment-${item.id}`, paymentDate: item.paymentDate, amount: item.price, status: "paid" as const, note: `Imported from ${item.source}`, importSourceId: item.sourceId ?? `${item.source}:${item.id}` }] : []);
+    const dated = group.flatMap((item) => item.payments?.length ? item.payments : item.paymentDate !== undefined ? [{ id: `import-payment-${item.id}`, paymentDate: item.paymentDate, amount: item.price, status: "paid" as const, note: `Imported from ${item.source}`, importSourceId: item.sourceId ?? `${item.source}:${item.id}` }] : []);
     const payments = dated.filter((payment, index, all) => all.findIndex((other) => samePaymentRecord(other, payment)) === index).sort((a, b) => a.paymentDate.localeCompare(b.paymentDate) || a.id.localeCompare(b.id));
-    const latest = payments.at(-1); const base = latest ? group.find((item) => item.paymentDate === latest.paymentDate && item.price === latest.amount) ?? group.at(-1)! : group.at(-1)!;
+    const validPayments = payments.filter((payment) => /^\d{4}-\d{2}-\d{2}$/.test(payment.paymentDate));
+    const latest = validPayments.at(-1); const base = latest ? group.find((item) => item.paymentDate === latest.paymentDate && item.price === latest.amount) ?? group.at(-1)! : group.at(-1)!;
     const warnings = [...new Set(group.flatMap((item) => item.warnings))];
     if (group.length > 1) warnings.push(`${group.length} charges were grouped into one subscription.`);
-    return { ...base, name: group[0].name, price: latest?.amount ?? base.price, nextPaymentDate: latest ? nextRenewalFromCharge(latest.paymentDate, base.billingFrequency) : base.nextPaymentDate, firstPaymentDate: payments.at(0)?.paymentDate, payments, priceHistory: reconcilePaymentPriceHistory([], payments), chargeCount: payments.length, warnings };
+    return { ...base, name: group[0].name, price: latest?.amount ?? base.price, nextPaymentDate: latest ? nextRenewalFromCharge(latest.paymentDate, base.billingFrequency) : base.nextPaymentDate, firstPaymentDate: validPayments.at(0)?.paymentDate, payments, priceHistory: reconcilePaymentPriceHistory([], validPayments), chargeCount: payments.length, warnings };
   });
 }
 
 export function candidateToSubscription(candidate: SmartImportCandidate): Partial<Subscription> & Pick<Subscription, "name" | "price" | "billingFrequency" | "nextPaymentDate"> {
-  const payments = (candidate.payments ?? []).map((payment) => ({ ...payment })); const latest = payments.length ? payments.reduce((current, payment) => payment.paymentDate >= current.paymentDate ? payment : current) : null;
-  if (latest) latest.amount = candidate.price;
-  return { name: candidate.name, price: candidate.price, currency: candidate.currency, billingFrequency: candidate.billingFrequency, nextPaymentDate: candidate.nextPaymentDate, firstPaymentDate: candidate.firstPaymentDate, payments, priceHistory: reconcilePaymentPriceHistory(candidate.priceHistory ?? [], payments), category: categories.includes(candidate.category) ? candidate.category : "Other", note: candidate.note, status: "active", autoRenewalStatus: "unknown", reminderDaysBefore: 3 };
+  const payments = (candidate.payments ?? []).filter((payment) => /^\d{4}-\d{2}-\d{2}$/.test(payment.paymentDate)).map((payment) => ({ ...payment }));
+  const latest = payments.length ? payments.reduce((current, payment) => payment.paymentDate >= current.paymentDate ? payment : current) : null;
+  const firstPaymentDate = payments.length ? payments.reduce((first, payment) => payment.paymentDate < first ? payment.paymentDate : first, payments[0].paymentDate) : candidate.firstPaymentDate;
+  return { name: candidate.name, price: latest?.amount ?? candidate.price, currency: candidate.currency, billingFrequency: candidate.billingFrequency, nextPaymentDate: candidate.nextPaymentDate, firstPaymentDate, payments, priceHistory: reconcilePaymentPriceHistory(candidate.priceHistory ?? [], payments), category: categories.includes(candidate.category) ? candidate.category : "Other", note: candidate.note, status: "active", autoRenewalStatus: "unknown", reminderDaysBefore: 3 };
 }

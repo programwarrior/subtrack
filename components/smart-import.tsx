@@ -3,8 +3,9 @@
 import { AlertCircle, CheckCircle2, FileSpreadsheet, FileText, Image as ImageIcon, LoaderCircle, ScanLine, Trash2, Upload } from "lucide-react";
 import { useRef, useState } from "react";
 import { categories, frequencies, type BillingFrequency, type Subscription } from "@/lib/types";
-import { candidateToSubscription, consolidateImportCandidates, parseDocumentText, parseImageReceiptText, parseSpreadsheetRows, subscriptionMatchKey, type SmartImportCandidate } from "@/lib/smart-import";
-import { frequencyLabel, formatMoney } from "@/lib/calculations";
+import { candidateToSubscription, consolidateImportCandidates, nextRenewalFromCharge, parseDocumentText, parseImageReceiptText, parseSpreadsheetRows, subscriptionMatchKey, type SmartImportCandidate } from "@/lib/smart-import";
+import { frequencyLabel, formatMoney, todayDateOnly } from "@/lib/calculations";
+import { reconcilePaymentPriceHistory } from "@/lib/payment-history";
 
 type AddInput = ReturnType<typeof candidateToSubscription>;
 
@@ -13,6 +14,8 @@ function chargeDateSummary(item: SmartImportCandidate): string {
   if (!dates.length) return "";
   return dates.length === 1 ? `charged ${dates[0]}` : `charges ${dates[0]} – ${dates.at(-1)}`;
 }
+
+function validChargeDate(date: string): boolean { return /^\d{4}-\d{2}-\d{2}$/.test(date) && date <= todayDateOnly(); }
 
 async function extractSpreadsheet(file: File, currency: string): Promise<SmartImportCandidate[]> {
   const XLSX = await import("xlsx");
@@ -67,7 +70,14 @@ export function SmartImport({ currency, existingSubscriptions, onImport, onClose
     } catch (reason) { setError(reason instanceof Error ? reason.message : "The files could not be read."); setPhase("upload"); }
   };
   const update = (id: string, patch: Partial<SmartImportCandidate>) => setCandidates((current) => current.map((item) => item.id === id ? { ...item, ...patch } : item));
-  const selected = candidates.filter((item) => item.selected && item.name.trim() && item.price > 0 && item.nextPaymentDate);
+  const updateCharge = (candidateId: string, paymentId: string, patch: { paymentDate?: string; amount?: number }) => setCandidates((current) => current.map((item) => {
+    if (item.id !== candidateId) return item;
+    const payments = (item.payments ?? []).map((payment) => payment.id === paymentId ? { ...payment, ...patch } : payment);
+    const dated = payments.filter((payment) => validChargeDate(payment.paymentDate)).sort((a, b) => a.paymentDate.localeCompare(b.paymentDate)); const latest = dated.at(-1);
+    return { ...item, payments, price: latest?.amount ?? item.price, firstPaymentDate: dated.at(0)?.paymentDate, nextPaymentDate: latest ? nextRenewalFromCharge(latest.paymentDate, item.billingFrequency) : item.nextPaymentDate, priceHistory: reconcilePaymentPriceHistory([], dated) };
+  }));
+  const selected = candidates.filter((item) => item.selected && item.name.trim() && item.price > 0 && item.nextPaymentDate && (item.payments ?? []).every((payment) => validChargeDate(payment.paymentDate)));
+  const selectedWithMissingDates = candidates.some((item) => item.selected && (item.payments ?? []).some((payment) => !validChargeDate(payment.paymentDate)));
   const recordedPaymentCount = candidates.reduce((sum, item) => sum + (item.chargeCount ?? item.payments?.length ?? (item.paymentDate ? 1 : 0)), 0);
   const reviewHeading = `${candidates.length} subscription${candidates.length === 1 ? "" : "s"}${recordedPaymentCount ? ` and ${recordedPaymentCount} payment${recordedPaymentCount === 1 ? "" : "s"}` : ""} found`;
   return <div className="smart-import-body">
@@ -88,9 +98,11 @@ export function SmartImport({ currency, existingSubscriptions, onImport, onClose
         <label className="candidate-check"><input type="checkbox" checked={item.selected} onChange={(event) => update(item.id, { selected: event.target.checked })} /><span className={`confidence ${item.confidence}`}>{item.confidence} confidence</span></label>
         <button className="candidate-remove" aria-label={`Remove ${item.name}`} onClick={() => setCandidates((current) => current.filter((candidate) => candidate.id !== item.id))}><Trash2 size={16} /></button>
         <div className="candidate-fields"><label className="field"><span>Name</span><input value={item.name} onChange={(event) => update(item.id, { name: event.target.value })} /></label><label className="field"><span>Price</span><div className="input-prefix"><span>{item.currency}</span><input type="number" min="0" step="0.01" value={item.price} onChange={(event) => update(item.id, { price: Number(event.target.value) })} /></div></label><label className="field"><span>Billing</span><select value={item.billingFrequency} onChange={(event) => update(item.id, { billingFrequency: event.target.value as BillingFrequency })}>{frequencies.map((frequency) => <option value={frequency} key={frequency}>{frequencyLabel(frequency)}</option>)}</select></label><label className="field"><span>Next payment</span><input type="date" value={item.nextPaymentDate} onChange={(event) => update(item.id, { nextPaymentDate: event.target.value })} /></label><label className="field"><span>Category</span><select value={item.category} onChange={(event) => update(item.id, { category: event.target.value })}>{categories.map((category) => <option key={category}>{category}</option>)}</select></label></div>
+        {!!item.payments?.length && <div className="candidate-charges"><strong>Recorded charges</strong>{item.payments.map((payment, index) => <div className="candidate-charge" key={payment.id}><span>Charge {index + 1}<small>{payment.note?.replace(/^Imported from /, "")}</small></span><label className="field"><span>Charge date</span><input type="date" max={todayDateOnly()} required className={!validChargeDate(payment.paymentDate) ? "invalid" : ""} value={payment.paymentDate} onChange={(event) => updateCharge(item.id, payment.id, { paymentDate: event.target.value })} />{!validChargeDate(payment.paymentDate) && <small className="error">Choose the date shown in this image</small>}</label><label className="field"><span>Amount</span><div className="input-prefix"><span>{item.currency}</span><input type="number" min="0.01" step="0.01" value={payment.amount} onChange={(event) => updateCharge(item.id, payment.id, { amount: Number(event.target.value) })} /></div></label></div>)}</div>}
         <div className="candidate-meta"><span>{formatMoney(item.price, item.currency)} · {item.chargeCount ? `${item.chargeCount} recorded charge${item.chargeCount === 1 ? "" : "s"} · ${chargeDateSummary(item)} · ` : ""}{item.source}</span>{item.warnings.length > 0 && <span className="candidate-warning"><AlertCircle size={13} /> {item.warnings.join(" ")}</span>}</div>
       </article>)}</div>
-      <div className="modal-actions import-actions"><button className="button secondary" onClick={onClose}>Cancel</button><button className="button primary" disabled={!selected.length} onClick={() => onImport(selected.map(candidateToSubscription))}><Upload size={17} /> Import {selected.length || ""} subscription{selected.length === 1 ? "" : "s"}</button></div>
+      {selectedWithMissingDates && <div className="import-error-box"><AlertCircle size={17} /><span>Enter the missing charge date for each image before importing. SubTrack will no longer replace unread dates with today.</span></div>}
+      <div className="modal-actions import-actions"><button className="button secondary" onClick={onClose}>Cancel</button><button className="button primary" disabled={!selected.length || selectedWithMissingDates} onClick={() => onImport(selected.map(candidateToSubscription))}><Upload size={17} /> Import {selected.length || ""} subscription{selected.length === 1 ? "" : "s"}</button></div>
     </>}
   </div>;
 }
