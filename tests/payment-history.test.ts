@@ -34,6 +34,7 @@ describe("historical payment tracking", () => {
     const legacy = { id: "old", paymentDate: "2026-07-19", amount: 12, status: "paid" as const, note: "Imported from IMG_1001.jpg" };
     const sameFile = { ...legacy, id: "new", paymentDate: "2026-06-19", importSourceId: "IMG_1001.jpg:1200:1234:0" };
     const differentFile = { ...sameFile, id: "other", note: "Imported from IMG_1002.jpg", importSourceId: "IMG_1002.jpg:1200:1235:0" };
-    expect(samePaymentRecord(legacy, sameFile)).toBe(true); expect(samePaymentRecord(sameFile, differentFile)).toBe(false);
+    const differentTransaction = { ...differentFile, paymentDate: "2026-05-19" };
+    expect(samePaymentRecord(legacy, sameFile)).toBe(true); expect(samePaymentRecord(sameFile, differentFile)).toBe(true); expect(samePaymentRecord(sameFile, differentTransaction)).toBe(false);
   });
 });

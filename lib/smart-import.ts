@@ -151,7 +151,9 @@ export function parseSpreadsheetRows(rows: unknown[][], fallbackCurrency = "EUR"
 }
 
 function cleanMerchant(raw: string): string {
-  return raw.replace(/\b(?:monthly|weekly|yearly|annual(?:ly)?|quarterly|subscription|renewal|recurring|payment|paid|due|debit|credit|transaction|merchant|details?|successful(?:ly)?)\b/gi, " ").replace(/\b\d{1,2}[/.]\d{1,2}(?:[/.]\d{2,4})?\b/g, " ").replace(/[|•*#:_-]+/g, " ").replace(/\s+/g, " ").trim();
+  const cleaned = raw.replace(/\b(?:monthly|weekly|yearly|annual(?:ly)?|quarterly|subscription|renewal|recurring|payment|paid|due|debit|credit|transaction|merchant|details?|successful(?:ly)?)\b/gi, " ").replace(/\b\d{1,2}[/.]\d{1,2}(?:[/.]\d{2,4})?\b/g, " ").replace(/[|•*#:_-]+/g, " ").replace(/\s+/g, " ").trim();
+  const withoutLogoMarker = cleaned.replace(/^\d{1,2}\s+(?=[a-z])/i, "");
+  return recurringVendors.some((vendor) => normalize(withoutLogoMarker).includes(vendor)) ? withoutLogoMarker : cleaned;
 }
 
 export function parseDocumentText(text: string, fallbackCurrency = "EUR", source = "Document"): SmartImportCandidate[] {
@@ -224,9 +226,25 @@ function receiptMoney(lines: string[], fallbackCurrency: string): { amount: numb
   return null;
 }
 
+function parseImageTransactionRows(lines: string[], fallbackCurrency: string, source: string): SmartImportCandidate[] {
+  const rows: SmartImportCandidate[] = []; let activeDate: string | null = null;
+  lines.forEach((line) => {
+    const lineDate = parseDateValue(dateTokens(line)[0] ?? "");
+    if (lineDate && lineDate <= todayDateOnly()) activeDate = lineDate;
+    parseDocumentText(line, fallbackCurrency, source).forEach((item) => {
+      const paymentDate = item.paymentDate || activeDate;
+      if (!paymentDate || paymentDate > todayDateOnly()) return;
+      rows.push({ ...item, paymentDate, firstPaymentDate: paymentDate, nextPaymentDate: nextRenewalFromCharge(paymentDate, item.billingFrequency), note: `Imported payment from ${source}`, warnings: item.warnings.filter((warning) => warning !== "Next payment date was estimated." && !warning.startsWith("Payment date could not be read.")), confidence: "high" });
+    });
+  });
+  return rows;
+}
+
 export function parseImageReceiptText(text: string, fallbackCurrency = "EUR", source = "Receipt image"): SmartImportCandidate[] {
   const lines = text.split(/\n+/).map((line) => line.trim()).filter((line) => line.length > 1);
   if (!lines.length) return [];
+  const transactionRows = parseImageTransactionRows(lines, fallbackCurrency, source);
+  if (transactionRows.length) return transactionRows;
   const direct = parseDocumentText(text, fallbackCurrency, source);
   const contextualDate = receiptDate(lines);
   if (direct.length) {

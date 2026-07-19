@@ -19,6 +19,7 @@ export function sameImportedSource(left: Payment, right: Payment): boolean {
 
 export function samePaymentRecord(left: Payment, right: Payment): boolean {
   if (sameImportedSource(left, right)) return true;
+  if (left.importSourceId && right.importSourceId) return left.paymentDate === right.paymentDate && left.amount === right.amount && left.status === right.status;
   if (left.importSourceId || right.importSourceId) return false;
   if (left.paymentDate !== right.paymentDate || left.amount !== right.amount || left.status !== right.status) return false;
   return (left.note ?? "") === (right.note ?? "");

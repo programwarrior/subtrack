@@ -40,11 +40,11 @@ describe("smart document import", () => {
     expect(grouped).toHaveLength(1); expect(grouped[0]).toMatchObject({ name: "NETFLIX.COM", price: 12, chargeCount: 4, firstPaymentDate: "2026-03-01" });
     expect(candidateToSubscription(grouped[0]).payments).toHaveLength(4);
   });
-  it("preserves distinct images when provider, amount, and inferred date are identical", () => {
-    const base = { selected: true, name: "Netflix", price: 12, currency: "EUR", billingFrequency: "monthly" as const, nextPaymentDate: "2026-08-19", paymentDate: "2026-07-19", category: "Entertainment", note: "Imported", confidence: "medium" as const, warnings: ["Payment date was estimated as today."], source: "receipt.jpg" };
+  it("deduplicates the same dated transaction when screenshots overlap", () => {
+    const base = { selected: true, name: "Netflix", price: 12, currency: "EUR", billingFrequency: "monthly" as const, nextPaymentDate: "2026-08-19", paymentDate: "2026-07-19", category: "Entertainment", note: "Imported", confidence: "high" as const, warnings: [], source: "receipt.jpg" };
     const images = [1, 2, 3, 4].map((number) => ({ ...base, id: `image-${number}`, sourceId: `iphone-image-${number}` }));
     const grouped = consolidateImportCandidates([...images, { ...images[0], id: "same-file-again" }]);
-    expect(grouped).toHaveLength(1); expect(grouped[0].chargeCount).toBe(4); expect(grouped[0].payments).toHaveLength(4);
+    expect(grouped).toHaveLength(1); expect(grouped[0].chargeCount).toBe(1); expect(grouped[0].payments).toHaveLength(1);
   });
   it("uses charged dates instead of renewal dates for payments and price changes", () => {
     const receipts = [["10.00", "May 3, 2026", "August 3, 2026"], ["12.00", "June 3rd, 2026", "August 3, 2026"]].flatMap(([amount, charged, renewal], index) => parseImageReceiptText(`NETFLIX.COM\nMonthly subscription\nAmount €${amount}\nNext renewal\n${renewal}\nCharged on\n${charged}`, "EUR", `netflix-${index + 1}.jpg`));
@@ -60,5 +60,19 @@ describe("smart document import", () => {
     expect(grouped[0].payments).toHaveLength(1);
     expect(grouped[0].payments?.[0].paymentDate).toBe("");
     expect(grouped[0].chargeCount).toBe(1);
+  });
+  it("pairs bank-app date headings with every following A2 Hosting charge", () => {
+    const screenshots = [
+      "13:32 all F112\nQ A2 hosting\n8 Sep 2024\n2 A2 Hosting 27.54 EUR\n8 Aug 2024\n2 A2 Hosting 27.54 EUR\n22 Jul 2024\n2 A2 Hosting 27.54 EUR\nA2 Hosting\n0 USD\nCard checked",
+      "13:32 all F112\nQ A2 hosting\n8 Jan 2025\n2 A2 Hosting 27.54 EUR\n8 Dec 2024\n2 A2 Hosting 27.54 EUR\n8 Nov 2024\n2 A2 Hosting 27.54 EUR\n8 Oct 2024\n2 A2 Hosting 27.54 EUR",
+      "13:33 all F112\nQ A2 hosting\n5 May 2025\n2 A2 Hosting 24.77 EUR\n8 Apr 2025\n2 A2 Hosting 29.72 EUR\n8 Mar 2025\n2 A2 Hosting 27.54 EUR\n8 Feb 2025\n2 A2 Hosting 27.54 EUR\n2 Jan 2025",
+      "13:33 all F112\nQ A2 hosting\n5 Jul 2026\n2 A2 Hosting 29.72 EUR\n5 Jun 2026\n2 A2 Hosting 29.72 EUR\n5 May 2026\n2 A2 Hosting 29.72 EUR\n5 May 2025\n2 A2 Hosting 24.77 EUR\n8 Apr 2025",
+    ].flatMap((text, index) => parseImageReceiptText(text, "EUR", `IMG_788${index + 2}.PNG`).map((item, itemIndex) => ({ ...item, sourceId: `image-${index}:${itemIndex}` })));
+    const grouped = consolidateImportCandidates(screenshots);
+    expect(grouped).toHaveLength(1); expect(grouped[0].name).toBe("A2 Hosting"); expect(grouped[0].chargeCount).toBe(14);
+    expect(grouped[0].payments?.map((payment) => [payment.paymentDate, payment.amount])).toEqual([
+      ["2024-07-22", 27.54], ["2024-08-08", 27.54], ["2024-09-08", 27.54], ["2024-10-08", 27.54], ["2024-11-08", 27.54], ["2024-12-08", 27.54], ["2025-01-08", 27.54], ["2025-02-08", 27.54], ["2025-03-08", 27.54], ["2025-04-08", 29.72], ["2025-05-05", 24.77], ["2026-05-05", 29.72], ["2026-06-05", 29.72], ["2026-07-05", 29.72],
+    ]);
+    expect(grouped[0].priceHistory?.map((change) => change.effectiveDate)).toEqual(["2025-04-08", "2025-05-05", "2026-05-05"]);
   });
 });
