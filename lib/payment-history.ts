@@ -12,9 +12,15 @@ export function confirmedPayments(payments: Payment[]): Payment[] {
   return payments.filter((payment) => payment.status !== "estimated").sort((a, b) => a.paymentDate.localeCompare(b.paymentDate) || a.id.localeCompare(b.id));
 }
 
-export function samePaymentRecord(left: Payment, right: Payment): boolean {
-  if (left.paymentDate !== right.paymentDate || left.amount !== right.amount || left.status !== right.status) return false;
+export function sameImportedSource(left: Payment, right: Payment): boolean {
   if (left.importSourceId && right.importSourceId) return left.importSourceId === right.importSourceId;
+  return Boolean((left.importSourceId || right.importSourceId) && left.note && left.note === right.note);
+}
+
+export function samePaymentRecord(left: Payment, right: Payment): boolean {
+  if (sameImportedSource(left, right)) return true;
+  if (left.importSourceId || right.importSourceId) return false;
+  if (left.paymentDate !== right.paymentDate || left.amount !== right.amount || left.status !== right.status) return false;
   return (left.note ?? "") === (right.note ?? "");
 }
 

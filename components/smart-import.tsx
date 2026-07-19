@@ -8,6 +8,12 @@ import { frequencyLabel, formatMoney } from "@/lib/calculations";
 
 type AddInput = ReturnType<typeof candidateToSubscription>;
 
+function chargeDateSummary(item: SmartImportCandidate): string {
+  const dates = [...new Set((item.payments ?? []).map((payment) => payment.paymentDate).filter(Boolean))].sort();
+  if (!dates.length) return "";
+  return dates.length === 1 ? `charged ${dates[0]}` : `charges ${dates[0]} – ${dates.at(-1)}`;
+}
+
 async function extractSpreadsheet(file: File, currency: string): Promise<SmartImportCandidate[]> {
   const XLSX = await import("xlsx");
   const workbook = XLSX.read(await file.arrayBuffer(), { type: "array", cellDates: true });
@@ -82,7 +88,7 @@ export function SmartImport({ currency, existingSubscriptions, onImport, onClose
         <label className="candidate-check"><input type="checkbox" checked={item.selected} onChange={(event) => update(item.id, { selected: event.target.checked })} /><span className={`confidence ${item.confidence}`}>{item.confidence} confidence</span></label>
         <button className="candidate-remove" aria-label={`Remove ${item.name}`} onClick={() => setCandidates((current) => current.filter((candidate) => candidate.id !== item.id))}><Trash2 size={16} /></button>
         <div className="candidate-fields"><label className="field"><span>Name</span><input value={item.name} onChange={(event) => update(item.id, { name: event.target.value })} /></label><label className="field"><span>Price</span><div className="input-prefix"><span>{item.currency}</span><input type="number" min="0" step="0.01" value={item.price} onChange={(event) => update(item.id, { price: Number(event.target.value) })} /></div></label><label className="field"><span>Billing</span><select value={item.billingFrequency} onChange={(event) => update(item.id, { billingFrequency: event.target.value as BillingFrequency })}>{frequencies.map((frequency) => <option value={frequency} key={frequency}>{frequencyLabel(frequency)}</option>)}</select></label><label className="field"><span>Next payment</span><input type="date" value={item.nextPaymentDate} onChange={(event) => update(item.id, { nextPaymentDate: event.target.value })} /></label><label className="field"><span>Category</span><select value={item.category} onChange={(event) => update(item.id, { category: event.target.value })}>{categories.map((category) => <option key={category}>{category}</option>)}</select></label></div>
-        <div className="candidate-meta"><span>{formatMoney(item.price, item.currency)} · {item.chargeCount ? `${item.chargeCount} recorded charge${item.chargeCount === 1 ? "" : "s"} · ` : ""}{item.source}</span>{item.warnings.length > 0 && <span className="candidate-warning"><AlertCircle size={13} /> {item.warnings.join(" ")}</span>}</div>
+        <div className="candidate-meta"><span>{formatMoney(item.price, item.currency)} · {item.chargeCount ? `${item.chargeCount} recorded charge${item.chargeCount === 1 ? "" : "s"} · ${chargeDateSummary(item)} · ` : ""}{item.source}</span>{item.warnings.length > 0 && <span className="candidate-warning"><AlertCircle size={13} /> {item.warnings.join(" ")}</span>}</div>
       </article>)}</div>
       <div className="modal-actions import-actions"><button className="button secondary" onClick={onClose}>Cancel</button><button className="button primary" disabled={!selected.length} onClick={() => onImport(selected.map(candidateToSubscription))}><Upload size={17} /> Import {selected.length || ""} subscription{selected.length === 1 ? "" : "s"}</button></div>
     </>}

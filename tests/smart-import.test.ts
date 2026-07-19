@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { candidateToSubscription, consolidateImportCandidates, inferCategory, normalizeDate, parseDocumentText, parseImageReceiptText, parseMoney, parseSpreadsheetRows } from "@/lib/smart-import";
+import { candidateToSubscription, consolidateImportCandidates, inferCategory, normalizeDate, parseDateValue, parseDocumentText, parseImageReceiptText, parseMoney, parseSpreadsheetRows } from "@/lib/smart-import";
 
 describe("smart document import", () => {
   it("extracts recurring services from statement text", () => {
@@ -11,6 +11,7 @@ describe("smart document import", () => {
     expect(items[0]).toMatchObject({ name: "Spotify", price: 11.99, nextPaymentDate: "2026-08-20", confidence: "high" }); expect(items[0].paymentDate).toBeUndefined();
   });
   it("supports locale money and inferred metadata", () => { expect(parseMoney("€ 1.299,50")).toEqual({ amount: 1299.5, currency: "EUR" }); expect(inferCategory("Netflix Premium")).toBe("Entertainment"); expect(normalizeDate("", "yearly").inferred).toBe(true); });
+  it("supports month-first and ordinal receipt dates", () => { expect(parseDateValue("Jul 4th, 2025")).toBe("2025-07-04"); expect(parseDateValue("4-Jul-25")).toBe("2025-07-04"); });
   it("groups differently priced charges for one merchant into one subscription", () => {
     const base = { selected: true, currency: "EUR", billingFrequency: "monthly" as const, nextPaymentDate: "2026-08-01", category: "Entertainment", note: "Imported", confidence: "high" as const, warnings: [], source: "statement.png" };
     const grouped = consolidateImportCandidates([{ ...base, id: "one", name: "Netflix", price: 10, paymentDate: "2026-05-01" }, { ...base, id: "two", name: "NETFLIX.COM", price: 14, paymentDate: "2026-06-01" }]);
@@ -43,5 +44,11 @@ describe("smart document import", () => {
     const images = [1, 2, 3, 4].map((number) => ({ ...base, id: `image-${number}`, sourceId: `iphone-image-${number}` }));
     const grouped = consolidateImportCandidates([...images, { ...images[0], id: "same-file-again" }]);
     expect(grouped).toHaveLength(1); expect(grouped[0].chargeCount).toBe(4); expect(grouped[0].payments).toHaveLength(4);
+  });
+  it("uses charged dates instead of renewal dates for payments and price changes", () => {
+    const receipts = [["10.00", "May 3, 2026", "August 3, 2026"], ["12.00", "June 3rd, 2026", "August 3, 2026"]].flatMap(([amount, charged, renewal], index) => parseImageReceiptText(`NETFLIX.COM\nMonthly subscription\nAmount €${amount}\nNext renewal\n${renewal}\nCharged on\n${charged}`, "EUR", `netflix-${index + 1}.jpg`));
+    const grouped = consolidateImportCandidates(receipts);
+    expect(grouped[0].payments?.map((payment) => payment.paymentDate)).toEqual(["2026-05-03", "2026-06-03"]);
+    expect(grouped[0].priceHistory?.[0]).toMatchObject({ previousPrice: 10, newPrice: 12, effectiveDate: "2026-06-03" });
   });
 });

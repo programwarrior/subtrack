@@ -92,15 +92,22 @@ function nextDefault(frequency: BillingFrequency): string {
 
 export function parseDateValue(value: unknown): string | null {
   if (value instanceof Date && !Number.isNaN(value.getTime())) return toDateOnly(value);
-  const text = String(value ?? "").trim();
+  const text = String(value ?? "").trim().replace(/(\d)(?:st|nd|rd|th)\b/gi, "$1");
   let date: Date | null = null;
-  if (/^\d{4}-\d{2}-\d{2}/.test(text)) date = new Date(`${text.slice(0, 10)}T12:00:00`);
+  const iso = text.match(/\b(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})\b/);
+  if (iso) date = new Date(Number(iso[1]), Number(iso[2]) - 1, Number(iso[3]), 12);
   else {
-    const numeric = text.match(/\b(\d{1,2})[/.](\d{1,2})[/.](\d{2,4})\b/);
+    const numeric = text.match(/\b(\d{1,2})[-/.](\d{1,2})[-/.](\d{2,4})\b/);
     if (numeric) { const year = Number(numeric[3]) < 100 ? 2000 + Number(numeric[3]) : Number(numeric[3]); date = new Date(year, Number(numeric[2]) - 1, Number(numeric[1]), 12); }
     else { const parsed = Date.parse(text); if (!Number.isNaN(parsed)) date = new Date(parsed); }
   }
   return date && !Number.isNaN(date.getTime()) ? toDateOnly(date) : null;
+}
+
+const receiptDatePattern = /\b\d{4}[-/.]\d{1,2}[-/.]\d{1,2}\b|\b\d{1,2}[-/.]\d{1,2}[-/.]\d{2,4}\b|\b\d{1,2}(?:st|nd|rd|th)?\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*,?\s+\d{2,4}\b|\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{1,2}(?:st|nd|rd|th)?,?\s+\d{2,4}\b/gi;
+
+function dateTokens(text: string): string[] {
+  return [...text.matchAll(receiptDatePattern)].map((match) => match[0]);
 }
 
 function nextRenewalFromCharge(date: string, frequency: BillingFrequency): string {
@@ -159,8 +166,7 @@ export function parseDocumentText(text: string, fallbackCurrency = "EUR", source
     let name = cleanMerchant(before); if (name.length < 2) name = cleanMerchant(after);
     name = name.replace(/^\d{4,}\s+/, "").slice(0, 80).trim();
     if (name.length < 2 || /^\d+$/.test(name)) continue;
-    const frequency = inferFrequency(line); const dateMatch = line.match(/\b\d{4}-\d{2}-\d{2}\b|\b\d{1,2}[/.]\d{1,2}[/.]\d{2,4}\b|\b\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{2,4}\b/i);
-    const parsedDate = parseDateValue(dateMatch?.[0] ?? ""); const explicitCharge = /\b(?:paid|charged|charge|debit|transaction|card)\b/i.test(line); const imageReceipt = /\.(?:png|jpe?g|webp)$/i.test(source);
+    const frequency = inferFrequency(line); const parsedDate = parseDateValue(dateTokens(line)[0] ?? ""); const explicitCharge = /\b(?:paid|charged|charge|debit|transaction|card)\b/i.test(line); const imageReceipt = /\.(?:png|jpe?g|webp)$/i.test(source);
     const paymentDate = parsedDate && (parsedDate <= todayDateOnly() || explicitCharge) ? parsedDate : imageReceipt && !parsedDate ? todayDateOnly() : undefined;
     const normalizedDate = paymentDate ? { date: nextRenewalFromCharge(paymentDate, frequency), inferred: !parsedDate } : normalizeDate(parsedDate ?? "", frequency);
     const hasRecurringWord = /week|month|quarter|annual|year|subscription|renewal|recurring/i.test(line); const knownVendor = recurringVendors.some((vendor) => normalize(name).includes(vendor));
@@ -172,13 +178,19 @@ export function parseDocumentText(text: string, fallbackCurrency = "EUR", source
 }
 
 function receiptDate(lines: string[]): string | null {
-  const prioritized = [...lines.filter((line) => /\b(?:transaction|payment|paid|charged|date|renewal)\b/i.test(line)), ...lines];
-  for (const line of prioritized) {
-    const match = line.match(/\b\d{4}-\d{2}-\d{2}\b|\b\d{1,2}[/.]\d{1,2}[/.]\d{2,4}\b|\b\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{2,4}\b/i);
-    const parsed = parseDateValue(match?.[0] ?? "");
-    if (parsed) return parsed;
-  }
-  return null;
+  const found: Array<{ date: string; score: number; index: number }> = [];
+  lines.forEach((line, index) => {
+    const context = `${lines[index - 1] ?? ""} ${line}`; const combined = `${line} ${lines[index + 1] ?? ""}`;
+    dateTokens(combined).forEach((token) => {
+      const date = parseDateValue(token); if (!date) return;
+      let score = date <= todayDateOnly() ? 20 : 0;
+      if (/\b(?:charged|charge date|transaction|purchase|paid|payment date|billing date|order date)\b/i.test(context)) score += 120;
+      else if (/\bdate\b/i.test(context)) score += 35;
+      if (/\b(?:next|renewal|renews|due|expires)\b/i.test(context)) score -= 120;
+      found.push({ date, score, index });
+    });
+  });
+  return found.sort((a, b) => b.score - a.score || a.index - b.index)[0]?.date ?? null;
 }
 
 function receiptMerchant(lines: string[]): string {
@@ -199,8 +211,8 @@ function receiptMerchant(lines: string[]): string {
 }
 
 function receiptMoney(lines: string[], fallbackCurrency: string): { amount: number; currency: string } | null {
-  const labelledIndexes = lines.map((line, index) => /\b(?:amount|paid|charged|charge|total)\b/i.test(line) ? index : -1).filter((index) => index >= 0);
-  for (const index of [...labelledIndexes].reverse()) {
+  const labelledIndexes = lines.map((line, index) => ({ index, score: /\bamount\b/i.test(line) ? 100 : /\btotal\b/i.test(line) ? 90 : /\b(?:paid|charged|charge)\b/i.test(line) ? 50 : 0 })).filter((item) => item.score).sort((a, b) => b.score - a.score || b.index - a.index);
+  for (const { index } of labelledIndexes) {
     const parsed = parseMoney(`${lines[index]} ${lines[index + 1] ?? ""}`, fallbackCurrency);
     if (parsed?.amount) return parsed;
   }
@@ -235,7 +247,7 @@ export function consolidateImportCandidates(items: SmartImportCandidate[]): Smar
   const groups = new Map<string, SmartImportCandidate[]>();
   items.forEach((item) => { const key = `${subscriptionMatchKey(item.name)}|${item.currency}`; groups.set(key, [...(groups.get(key) ?? []), item]); });
   return [...groups.values()].map((group) => {
-    const dated = group.flatMap((item) => item.payments?.length ? item.payments : item.paymentDate ? [{ id: `import-payment-${item.id}`, paymentDate: item.paymentDate, amount: item.price, status: "paid" as const, note: `Imported from ${item.source}`, importSourceId: item.sourceId ?? item.source }] : []);
+    const dated = group.flatMap((item) => item.payments?.length ? item.payments : item.paymentDate ? [{ id: `import-payment-${item.id}`, paymentDate: item.paymentDate, amount: item.price, status: "paid" as const, note: `Imported from ${item.source}`, importSourceId: item.sourceId ?? `${item.source}:${item.id}` }] : []);
     const payments = dated.filter((payment, index, all) => all.findIndex((other) => samePaymentRecord(other, payment)) === index).sort((a, b) => a.paymentDate.localeCompare(b.paymentDate) || a.id.localeCompare(b.id));
     const latest = payments.at(-1); const base = latest ? group.find((item) => item.paymentDate === latest.paymentDate && item.price === latest.amount) ?? group.at(-1)! : group.at(-1)!;
     const warnings = [...new Set(group.flatMap((item) => item.warnings))];
