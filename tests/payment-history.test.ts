@@ -13,6 +13,10 @@ describe("historical payment tracking", () => {
     const subscription = createSubscription({ name: "Spotify", price: 12, billingFrequency: "monthly", firstPaymentDate: "2026-01-01", nextPaymentDate: "2026-03-01", payments: [{ id: "paid", paymentDate: "2026-02-01", amount: 12, status: "paid" }] });
     expect(buildEstimatedPaymentHistory(subscription, "2026-03-01")).toHaveLength(2);
   });
+  it("keeps imported history evidence-only without filling schedule gaps", () => {
+    const subscription = createSubscription({ name: "A2 Hosting", price: 29.72, billingFrequency: "monthly", firstPaymentDate: "2024-07-22", nextPaymentDate: "2026-08-05", payments: [{ id: "july", paymentDate: "2024-07-22", amount: 27.54, status: "paid", importSourceId: "IMG_7882:0" }, { id: "may", paymentDate: "2026-05-05", amount: 29.72, status: "paid", importSourceId: "IMG_7885:2" }] });
+    expect(buildEstimatedPaymentHistory(subscription, "2026-07-19")).toEqual([subscription.payments[1], subscription.payments[0]]);
+  });
   it("uses the price effective on each historical payment", () => {
     const subscription = createSubscription({ name: "Software", price: 20, billingFrequency: "monthly", firstPaymentDate: "2026-01-01", nextPaymentDate: "2026-05-01", priceHistory: [{ id: "change", previousPrice: 10, newPrice: 20, effectiveDate: "2026-03-15", note: "Plan upgrade" }] });
     const payments = buildEstimatedPaymentHistory(subscription, "2026-05-01");

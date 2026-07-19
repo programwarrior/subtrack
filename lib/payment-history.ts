@@ -57,6 +57,8 @@ export function priceAtDate(subscription: Pick<Subscription, "price" | "priceHis
 
 export function buildEstimatedPaymentHistory(subscription: Subscription, today = todayDateOnly()): Payment[] {
   const confirmed = confirmedPayments(subscription.payments);
+  const hasImportedPayments = confirmed.some((payment) => Boolean(payment.importSourceId) || /^Imported (?:payment )?from /i.test(payment.note ?? ""));
+  if (hasImportedPayments) return confirmed.sort((a, b) => b.paymentDate.localeCompare(a.paymentDate));
   if (!subscription.firstPaymentDate || subscription.firstPaymentDate >= subscription.nextPaymentDate) return confirmed.sort((a, b) => b.paymentDate.localeCompare(a.paymentDate));
   const confirmedDates = new Set(confirmed.flatMap((payment) => [payment.paymentDate, payment.scheduledDate].filter(Boolean) as string[])); const estimated: Payment[] = [];
   let paymentDate = subscription.firstPaymentDate; let guard = 0;

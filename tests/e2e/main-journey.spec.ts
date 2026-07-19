@@ -82,7 +82,9 @@ test("groups repeated imported charges into one subscription", async ({ page }) 
   await expect(page.getByRole("article").filter({ hasText: "Netflix" })).toHaveCount(1);
   await page.getByRole("article").filter({ hasText: "Netflix" }).click();
   await expect(page.getByRole("dialog").getByText("paid", { exact: true })).toHaveCount(3);
+  await expect(page.getByRole("dialog").getByText("estimated", { exact: true })).toHaveCount(0);
   await expect(page.getByText("€16.00", { exact: true }).first()).toBeVisible();
+  await expect(page.getByRole("dialog")).toContainText("01/08/2026");
 });
 
 test("shows safe account login without device pairing", async ({ page }) => {
