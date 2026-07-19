@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { basePath } from "@/lib/base-path";
 import { calculateNextPaymentDate, renewalPrice, todayDateOnly } from "@/lib/calculations";
-import { buildEstimatedPaymentHistory, confirmedPayments, normalizePriceHistory, reconcilePaymentPriceHistory } from "@/lib/payment-history";
+import { buildEstimatedPaymentHistory, confirmedPayments, normalizePriceHistory, reconcilePaymentPriceHistory, samePaymentRecord } from "@/lib/payment-history";
 import { subscriptionMatchKey } from "@/lib/smart-import";
 import { defaultSettings, type AppData, type Payment, type Settings, type Subscription } from "@/lib/types";
 
@@ -27,7 +27,7 @@ export function createSubscription(input: Partial<Subscription> & Pick<Subscript
 }
 
 function mergePayments(existing: Payment[], incoming: Payment[]): Payment[] {
-  return [...confirmedPayments(existing), ...confirmedPayments(incoming)].filter((payment, index, all) => all.findIndex((other) => other.paymentDate === payment.paymentDate && other.amount === payment.amount && other.status === payment.status && (other.importSourceId ?? other.note ?? "") === (payment.importSourceId ?? payment.note ?? "")) === index).sort((a, b) => b.paymentDate.localeCompare(a.paymentDate) || a.id.localeCompare(b.id));
+  return [...confirmedPayments(existing), ...confirmedPayments(incoming)].filter((payment, index, all) => all.findIndex((other) => samePaymentRecord(other, payment)) === index).sort((a, b) => b.paymentDate.localeCompare(a.paymentDate) || a.id.localeCompare(b.id));
 }
 
 export function useSubscriptions() {

@@ -1,5 +1,5 @@
 import { calculateNextPaymentDate, todayDateOnly, toDateOnly } from "./calculations";
-import { reconcilePaymentPriceHistory } from "./payment-history";
+import { reconcilePaymentPriceHistory, samePaymentRecord } from "./payment-history";
 import { categories, frequencies, type BillingFrequency, type Payment, type PriceChange, type Subscription } from "./types";
 
 export type ImportConfidence = "high" | "medium" | "low";
@@ -236,7 +236,7 @@ export function consolidateImportCandidates(items: SmartImportCandidate[]): Smar
   items.forEach((item) => { const key = `${subscriptionMatchKey(item.name)}|${item.currency}`; groups.set(key, [...(groups.get(key) ?? []), item]); });
   return [...groups.values()].map((group) => {
     const dated = group.flatMap((item) => item.payments?.length ? item.payments : item.paymentDate ? [{ id: `import-payment-${item.id}`, paymentDate: item.paymentDate, amount: item.price, status: "paid" as const, note: `Imported from ${item.source}`, importSourceId: item.sourceId ?? item.source }] : []);
-    const payments = dated.filter((payment, index, all) => all.findIndex((other) => other.paymentDate === payment.paymentDate && other.amount === payment.amount && other.status === payment.status && (other.importSourceId ?? other.note ?? "") === (payment.importSourceId ?? payment.note ?? "")) === index).sort((a, b) => a.paymentDate.localeCompare(b.paymentDate) || a.id.localeCompare(b.id));
+    const payments = dated.filter((payment, index, all) => all.findIndex((other) => samePaymentRecord(other, payment)) === index).sort((a, b) => a.paymentDate.localeCompare(b.paymentDate) || a.id.localeCompare(b.id));
     const latest = payments.at(-1); const base = latest ? group.find((item) => item.paymentDate === latest.paymentDate && item.price === latest.amount) ?? group.at(-1)! : group.at(-1)!;
     const warnings = [...new Set(group.flatMap((item) => item.warnings))];
     if (group.length > 1) warnings.push(`${group.length} charges were grouped into one subscription.`);

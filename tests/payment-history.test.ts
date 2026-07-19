@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createSubscription } from "@/hooks/use-subscriptions";
-import { buildEstimatedPaymentHistory, normalizePriceHistory, priceAtDate, reconcilePaymentPriceHistory, recordedSpend } from "@/lib/payment-history";
+import { buildEstimatedPaymentHistory, normalizePriceHistory, priceAtDate, reconcilePaymentPriceHistory, recordedSpend, samePaymentRecord } from "@/lib/payment-history";
 
 describe("historical payment tracking", () => {
   it("creates estimated renewals from the first payment date", () => {
@@ -29,5 +29,11 @@ describe("historical payment tracking", () => {
     const history = reconcilePaymentPriceHistory([], payments);
     expect(history).toHaveLength(1); expect(history[0]).toMatchObject({ previousPrice: 10, newPrice: 14, effectiveDate: "2026-02-01", paymentId: "two" });
     expect(recordedSpend(payments)).toBe(24);
+  });
+  it("matches a legacy image payment to its new source-aware version", () => {
+    const legacy = { id: "old", paymentDate: "2026-07-19", amount: 12, status: "paid" as const, note: "Imported from IMG_1001.jpg" };
+    const sameFile = { ...legacy, id: "new", importSourceId: "IMG_1001.jpg:1200:1234:0" };
+    const differentFile = { ...sameFile, id: "other", note: "Imported from IMG_1002.jpg", importSourceId: "IMG_1002.jpg:1200:1235:0" };
+    expect(samePaymentRecord(legacy, sameFile)).toBe(true); expect(samePaymentRecord(sameFile, differentFile)).toBe(false);
   });
 });

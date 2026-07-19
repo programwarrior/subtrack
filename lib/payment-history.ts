@@ -12,6 +12,12 @@ export function confirmedPayments(payments: Payment[]): Payment[] {
   return payments.filter((payment) => payment.status !== "estimated").sort((a, b) => a.paymentDate.localeCompare(b.paymentDate) || a.id.localeCompare(b.id));
 }
 
+export function samePaymentRecord(left: Payment, right: Payment): boolean {
+  if (left.paymentDate !== right.paymentDate || left.amount !== right.amount || left.status !== right.status) return false;
+  if (left.importSourceId && right.importSourceId) return left.importSourceId === right.importSourceId;
+  return (left.note ?? "") === (right.note ?? "");
+}
+
 export function priceChangesFromPayments(payments: Payment[]): PriceChange[] {
   const paid = confirmedPayments(payments).filter((payment) => payment.status === "paid");
   if (paid.length < 2) return [];
