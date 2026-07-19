@@ -29,7 +29,14 @@ test("offers PDF, spreadsheet, and image import inside Add subscription", async 
   await expect(page.getByText("Read subscription details from a file")).toBeVisible();
   await expect(page.getByText("Excel / CSV")).toBeVisible();
   await page.getByRole("button", { name: "Choose files" }).click();
-  await expect(page.getByText("Drop files here or choose files")).toBeVisible();
+  await expect(page.getByText("Drop files here or choose multiple files")).toBeVisible();
+  const fileInput = page.locator('input[type="file"]');
+  await expect(fileInput).toHaveAttribute("multiple", "");
+  await fileInput.setInputFiles([
+    { name: "one.csv", mimeType: "text/csv", buffer: Buffer.from("Name,Price\nFirst plan,10") },
+    { name: "two.csv", mimeType: "text/csv", buffer: Buffer.from("Name,Price\nSecond plan,20") },
+  ]);
+  await expect(page.getByText("2 subscriptions found")).toBeVisible();
   await page.getByRole("button", { name: "Cancel" }).click();
   await expect(page.getByLabel("Name *")).toBeVisible();
 });

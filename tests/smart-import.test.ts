@@ -38,4 +38,10 @@ describe("smart document import", () => {
     expect(grouped).toHaveLength(1); expect(grouped[0]).toMatchObject({ name: "NETFLIX.COM", price: 12, chargeCount: 4, firstPaymentDate: "2026-03-01" });
     expect(candidateToSubscription(grouped[0]).payments).toHaveLength(4);
   });
+  it("preserves distinct images when provider, amount, and inferred date are identical", () => {
+    const base = { selected: true, name: "Netflix", price: 12, currency: "EUR", billingFrequency: "monthly" as const, nextPaymentDate: "2026-08-19", paymentDate: "2026-07-19", category: "Entertainment", note: "Imported", confidence: "medium" as const, warnings: ["Payment date was estimated as today."], source: "receipt.jpg" };
+    const images = [1, 2, 3, 4].map((number) => ({ ...base, id: `image-${number}`, sourceId: `iphone-image-${number}` }));
+    const grouped = consolidateImportCandidates([...images, { ...images[0], id: "same-file-again" }]);
+    expect(grouped).toHaveLength(1); expect(grouped[0].chargeCount).toBe(4); expect(grouped[0].payments).toHaveLength(4);
+  });
 });

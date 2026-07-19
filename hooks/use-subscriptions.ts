@@ -27,7 +27,7 @@ export function createSubscription(input: Partial<Subscription> & Pick<Subscript
 }
 
 function mergePayments(existing: Payment[], incoming: Payment[]): Payment[] {
-  return [...confirmedPayments(existing), ...confirmedPayments(incoming)].filter((payment, index, all) => all.findIndex((other) => other.paymentDate === payment.paymentDate && other.amount === payment.amount && other.status === payment.status) === index).sort((a, b) => b.paymentDate.localeCompare(a.paymentDate) || a.id.localeCompare(b.id));
+  return [...confirmedPayments(existing), ...confirmedPayments(incoming)].filter((payment, index, all) => all.findIndex((other) => other.paymentDate === payment.paymentDate && other.amount === payment.amount && other.status === payment.status && (other.importSourceId ?? other.note ?? "") === (payment.importSourceId ?? payment.note ?? "")) === index).sort((a, b) => b.paymentDate.localeCompare(a.paymentDate) || a.id.localeCompare(b.id));
 }
 
 export function useSubscriptions() {
@@ -65,7 +65,7 @@ export function useSubscriptions() {
     const hadController = Boolean(navigator.serviceWorker.controller); let reloading = false;
     const activateUpdate = () => { if (hadController && !reloading) { reloading = true; window.location.reload(); } };
     navigator.serviceWorker.addEventListener("controllerchange", activateUpdate);
-    navigator.serviceWorker.register(`${basePath}/sw.js?v=8`, { scope: `${basePath}/`, updateViaCache: "none" }).then((registration) => registration.update()).catch(() => undefined);
+    navigator.serviceWorker.register(`${basePath}/sw.js?v=9`, { scope: `${basePath}/`, updateViaCache: "none" }).then((registration) => registration.update()).catch(() => undefined);
     return () => navigator.serviceWorker.removeEventListener("controllerchange", activateUpdate);
   }, []);
 

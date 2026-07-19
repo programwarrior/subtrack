@@ -10,6 +10,7 @@ export interface Payment {
   amount: number;
   status: "paid" | "missed" | "estimated";
   note?: string;
+  importSourceId?: string;
 }
 
 export interface PriceChange {

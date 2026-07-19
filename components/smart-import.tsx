@@ -44,14 +44,15 @@ export function SmartImport({ currency, existingSubscriptions, onImport, onClose
     if (!files.length) return; setPhase("processing"); setError(""); setCandidates([]); const found: SmartImportCandidate[] = [];
     try {
       for (let index = 0; index < files.length; index++) {
-        const file = files[index]; if (file.size > 20 * 1024 * 1024) throw new Error(`${file.name} is larger than the 20 MB limit.`); const extension = file.name.split(".").pop()?.toLowerCase(); setProgressLabel(`Opening ${file.name}`); setProgress(index / files.length);
-        const report = (value: number, label: string) => { setProgress((index + value) / files.length); setProgressLabel(label); };
+        const file = files[index]; if (file.size > 20 * 1024 * 1024) throw new Error(`${file.name} is larger than the 20 MB limit.`); const extension = file.name.split(".").pop()?.toLowerCase(); setProgressLabel(`Opening file ${index + 1} of ${files.length}: ${file.name}`); setProgress(index / files.length);
+        const report = (value: number, label: string) => { setProgress((index + value) / files.length); setProgressLabel(`${label} · file ${index + 1} of ${files.length}`); };
         let items: SmartImportCandidate[];
         if (["xlsx", "xls", "csv"].includes(extension ?? "")) items = await extractSpreadsheet(file, currency);
         else if (extension === "pdf" || file.type === "application/pdf") items = await extractPdf(file, currency, report);
         else if (file.type.startsWith("image/") || ["png", "jpg", "jpeg", "webp"].includes(extension ?? "")) items = await extractImage(file, currency, report);
         else throw new Error(`${file.name} is not a supported file type.`);
-        found.push(...items);
+        const fileIdentity = `${file.name}:${file.size}:${file.lastModified}`;
+        found.push(...items.map((item, itemIndex) => ({ ...item, sourceId: item.sourceId ?? `${fileIdentity}:${itemIndex}` })));
       }
       const existing = new Map(existingSubscriptions.map((item) => [subscriptionMatchKey(item.name), item.name]));
       const reviewed = consolidateImportCandidates(found).map((item) => { const match = existing.get(subscriptionMatchKey(item.name)); return match ? { ...item, warnings: [...item.warnings, `Charges will be added to the existing ${match} subscription.`] } : item; });
@@ -66,14 +67,14 @@ export function SmartImport({ currency, existingSubscriptions, onImport, onClose
   return <div className="smart-import-body">
     {phase === "upload" && <>
       <button type="button" className={`import-dropzone ${dragging ? "dragging" : ""}`} onClick={() => fileRef.current?.click()} onDragOver={(event) => { event.preventDefault(); setDragging(true); }} onDragLeave={() => setDragging(false)} onDrop={(event) => { event.preventDefault(); setDragging(false); void processFiles([...event.dataTransfer.files]); }}>
-        <span className="import-icon"><ScanLine size={25} /></span><strong>Drop files here or choose files</strong><p>PDF statements, Excel or CSV sheets, and receipt screenshots</p><span className="file-types"><i><FileText size={14} /> PDF</i><i><FileSpreadsheet size={14} /> Excel</i><i><ImageIcon size={14} /> Images</i></span>
+        <span className="import-icon"><ScanLine size={25} /></span><strong>Drop files here or choose multiple files</strong><p>Every selected PDF, spreadsheet, or receipt image will be read.</p><span className="file-types"><i><FileText size={14} /> PDF</i><i><FileSpreadsheet size={14} /> Excel</i><i><ImageIcon size={14} /> Images</i></span>
       </button>
       <input ref={fileRef} className="sr-only" type="file" multiple accept=".pdf,.xlsx,.xls,.csv,.png,.jpg,.jpeg,.webp,application/pdf,image/*" onChange={(event) => void processFiles([...(event.target.files ?? [])])} />
       <div className="privacy-note"><CheckCircle2 size={16} /><p><strong>Private by design</strong><span>Files are read in your browser and are not uploaded to SubTrack. You review every result before it is saved.</span></p></div>
       {error && <div className="import-error-box"><AlertCircle size={17} /><span>{error}</span></div>}
       <div className="import-start-actions"><button className="button secondary" onClick={onClose}>Cancel</button></div>
     </>}
-    {phase === "processing" && <div className="import-processing"><span className="processing-icon"><LoaderCircle size={29} /></span><h3>Finding subscriptions…</h3><p>{progressLabel}</p><div className="progress-track"><span style={{ width: `${Math.max(6, progress * 100)}%` }} /></div><small>Images can take a little longer while text is recognized.</small></div>}
+    {phase === "processing" && <div className="import-processing"><span className="processing-icon"><LoaderCircle size={29} /></span><h3>Finding subscriptions…</h3><p>{progressLabel}</p><div className="progress-track"><span style={{ width: `${Math.max(6, progress * 100)}%` }} /></div><small>All selected files are processed one by one. Images can take a little longer.</small></div>}
     {phase === "review" && <>
       <div className="review-summary"><div><span className="import-icon small"><CheckCircle2 size={18} /></span><div><strong>{reviewHeading}</strong><p>Repeated charges from the same provider are grouped into its payment history. Check the details before saving.</p></div></div><button className="button secondary compact" onClick={() => { setPhase("upload"); setCandidates([]); setError(""); }}>Choose other files</button></div>
       {error && <div className="import-error-box"><AlertCircle size={17} /><span>{error}</span></div>}
