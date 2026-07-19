@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { basePath } from "@/lib/base-path";
 import { calculateNextPaymentDate, renewalPrice, todayDateOnly } from "@/lib/calculations";
 import { buildEstimatedPaymentHistory, confirmedPayments, normalizePriceHistory, reconcilePaymentPriceHistory, samePaymentRecord } from "@/lib/payment-history";
-import { nextRenewalFromCharge, subscriptionMatchKey } from "@/lib/smart-import";
+import { subscriptionMatchKey } from "@/lib/smart-import";
 import { defaultSettings, type AppData, type Payment, type Settings, type Subscription } from "@/lib/types";
 
 const STORAGE_KEY = "subtrack:data:v1";
@@ -39,6 +39,13 @@ function mergePayments(existing: Payment[], incoming: Payment[]): Payment[] {
 function normalizeStoredSubscription(subscription: Subscription): Subscription {
   const safe = { ...subscription, payments: subscription.payments ?? [], priceHistory: subscription.priceHistory ?? [] };
   return { ...safe, payments: buildEstimatedPaymentHistory(safe) };
+}
+
+function nextPaymentFromCharge(subscription: Subscription, paymentDate: string): string {
+  if (subscription.billingFrequency === "one-time") return paymentDate;
+  let next = calculateNextPaymentDate(paymentDate, subscription.billingFrequency, subscription.customIntervalNumber, subscription.customIntervalUnit); let guard = 0;
+  while (next <= todayDateOnly() && guard++ < 240) next = calculateNextPaymentDate(next, subscription.billingFrequency, subscription.customIntervalNumber, subscription.customIntervalUnit);
+  return next;
 }
 
 export function useSubscriptions() {
@@ -76,7 +83,7 @@ export function useSubscriptions() {
     const hadController = Boolean(navigator.serviceWorker.controller); let reloading = false;
     const activateUpdate = () => { if (hadController && !reloading) { reloading = true; window.location.reload(); } };
     navigator.serviceWorker.addEventListener("controllerchange", activateUpdate);
-    navigator.serviceWorker.register(`${basePath}/sw.js?v=13`, { scope: `${basePath}/`, updateViaCache: "none" }).then((registration) => registration.update()).catch(() => undefined);
+    navigator.serviceWorker.register(`${basePath}/sw.js?v=14`, { scope: `${basePath}/`, updateViaCache: "none" }).then((registration) => registration.update()).catch(() => undefined);
     return () => navigator.serviceWorker.removeEventListener("controllerchange", activateUpdate);
   }, []);
 
@@ -156,6 +163,19 @@ export function useSubscriptions() {
     }) }));
   }, []);
 
+  const addPayment = useCallback((id: string, value: Pick<Payment, "paymentDate" | "amount" | "status"> & { note?: string }) => {
+    setData((current) => ({ ...current, subscriptions: current.subscriptions.map((item) => {
+      if (item.id !== id) return item;
+      const saved: Payment = { id: uid(), paymentDate: value.paymentDate, amount: value.amount, status: value.status === "estimated" ? "paid" : value.status, note: value.note };
+      const payments = [...confirmedPayments(item.payments), saved].sort((a, b) => b.paymentDate.localeCompare(a.paymentDate) || a.id.localeCompare(b.id));
+      const priceHistory = reconcilePaymentPriceHistory(item.priceHistory, payments); const latestPaid = confirmedPayments(payments).filter((payment) => payment.status === "paid").at(-1);
+      const firstPaymentDate = [item.firstPaymentDate, ...payments.map((payment) => payment.paymentDate)].filter(Boolean).sort()[0];
+      const draft = { ...item, payments, priceHistory, firstPaymentDate, nextPaymentDate: latestPaid ? nextPaymentFromCharge(item, latestPaid.paymentDate) : item.nextPaymentDate, updatedAt: new Date().toISOString() };
+      const updated = { ...draft, price: renewalPrice(draft) };
+      return { ...updated, payments: buildEstimatedPaymentHistory(updated) };
+    }) }));
+  }, []);
+
   const importSubscriptions = useCallback((inputs: Parameters<typeof createSubscription>[0][]) => {
     setData((current) => {
       let subscriptions = [...current.subscriptions]; const tombstones = { ...current.tombstones };
@@ -165,7 +185,7 @@ export function useSubscriptions() {
         const existing = subscriptions[matchIndex]; const payments = mergePayments(existing.payments, incoming.payments);
         const priceHistory = reconcilePaymentPriceHistory([...existing.priceHistory, ...incoming.priceHistory], payments); const latestPayment = confirmedPayments(payments).at(-1);
         const firstPaymentDate = [existing.firstPaymentDate, incoming.firstPaymentDate, ...payments.map((payment) => payment.paymentDate)].filter(Boolean).sort()[0];
-        const draft = { ...existing, nextPaymentDate: latestPayment ? nextRenewalFromCharge(latestPayment.paymentDate, existing.billingFrequency) : incoming.nextPaymentDate, firstPaymentDate, payments, priceHistory, note: existing.note || incoming.note, updatedAt: new Date().toISOString() };
+        const draft = { ...existing, nextPaymentDate: latestPayment ? nextPaymentFromCharge(existing, latestPayment.paymentDate) : incoming.nextPaymentDate, firstPaymentDate, payments, priceHistory, note: existing.note || incoming.note, updatedAt: new Date().toISOString() };
         const updated = { ...draft, price: renewalPrice({ ...draft, price: latestPayment?.amount ?? incoming.price }) };
         subscriptions[matchIndex] = { ...updated, payments: buildEstimatedPaymentHistory(updated) }; delete tombstones[existing.id];
       });
@@ -196,5 +216,5 @@ export function useSubscriptions() {
 
   const replaceAllData = useCallback((next: AppData) => setData({ ...next, subscriptions: next.subscriptions.map(normalizeStoredSubscription), settings: { ...defaultSettings, ...next.settings }, deletedSubscriptions: next.deletedSubscriptions ?? [] }), []);
 
-  return useMemo(() => ({ ...data, ready, lastDeleted, addSubscription, importSubscriptions, updateSubscription, updatePayment, addPriceChange, deleteSubscription, undoDelete, restoreDeletedSubscription, markPaid, updateSettings, replaceSubscriptions, replaceAllData, loadDemo }), [data, ready, lastDeleted, addSubscription, importSubscriptions, updateSubscription, updatePayment, addPriceChange, deleteSubscription, undoDelete, restoreDeletedSubscription, markPaid, updateSettings, replaceSubscriptions, replaceAllData, loadDemo]);
+  return useMemo(() => ({ ...data, ready, lastDeleted, addSubscription, importSubscriptions, updateSubscription, updatePayment, addPayment, addPriceChange, deleteSubscription, undoDelete, restoreDeletedSubscription, markPaid, updateSettings, replaceSubscriptions, replaceAllData, loadDemo }), [data, ready, lastDeleted, addSubscription, importSubscriptions, updateSubscription, updatePayment, addPayment, addPriceChange, deleteSubscription, undoDelete, restoreDeletedSubscription, markPaid, updateSettings, replaceSubscriptions, replaceAllData, loadDemo]);
 }

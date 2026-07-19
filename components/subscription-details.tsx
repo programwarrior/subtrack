@@ -1,11 +1,11 @@
 "use client";
 
-import { Bell, CalendarDays, Check, CreditCard, ExternalLink, FileText, Pencil, Pause, Play, RotateCcw, TrendingUp, Trash2 } from "lucide-react";
+import { Bell, CalendarDays, Check, CreditCard, ExternalLink, FileText, Pencil, Pause, Play, Plus, RotateCcw, TrendingUp, Trash2 } from "lucide-react";
 import type { Settings, Subscription } from "@/lib/types";
 import { daysUntil, formatDate, formatMoney, frequencyLabel, monthlyEquivalent, renewalPrice, yearlyEquivalent } from "@/lib/calculations";
 import { recordedSpend } from "@/lib/payment-history";
 
-export function SubscriptionDetails({ subscription, settings, onEdit, onEditPayment, onPriceChange, onUpdate, onPaid, onDelete }: { subscription: Subscription; settings: Settings; onEdit: () => void; onEditPayment: (paymentId: string) => void; onPriceChange: () => void; onUpdate: (patch: Partial<Subscription>) => void; onPaid: () => void; onDelete: () => void }) {
+export function SubscriptionDetails({ subscription, settings, onEdit, onAddPayment, onEditPayment, onPriceChange, onUpdate, onPaid, onDelete }: { subscription: Subscription; settings: Settings; onEdit: () => void; onAddPayment: () => void; onEditPayment: (paymentId: string) => void; onPriceChange: () => void; onUpdate: (patch: Partial<Subscription>) => void; onPaid: () => void; onDelete: () => void }) {
   const days = daysUntil(subscription.nextPaymentDate);
   const currentPrice = renewalPrice(subscription);
   const reminder = subscription.reminderDaysBefore === null ? "No reminder" : subscription.reminderDaysBefore === 0 ? "On payment day" : `${subscription.reminderDaysBefore} days before`;
@@ -32,7 +32,7 @@ export function SubscriptionDetails({ subscription, settings, onEdit, onEditPaym
     </div></section>
     {subscription.note && <section className="detail-section"><h3>Note</h3><p className="note-box">{subscription.note}</p></section>}
     {subscription.websiteUrl && <a className="manage-link" href={subscription.websiteUrl} target="_blank" rel="noreferrer">Manage subscription <ExternalLink size={15} /></a>}
-    <section className="detail-section"><h3>Payment history</h3>{subscription.payments.length ? <div className="history-list">{subscription.payments.map((payment) => <div key={payment.id}><span>{formatDate(payment.paymentDate, settings.dateFormat)}</span><strong>{formatMoney(payment.amount, subscription.currency)}</strong><em className={payment.status}>{payment.status}</em><button className="history-edit" aria-label={`Edit payment from ${payment.paymentDate}`} onClick={() => onEditPayment(payment.id)}><Pencil size={13} /></button></div>)}</div> : <p className="muted">No payments recorded yet. Add a first payment date to estimate past renewals.</p>}</section>
+    <section className="detail-section"><div className="detail-section-title"><h3>Payment history</h3><button className="button secondary compact" onClick={onAddPayment}><Plus size={14} /> Add missing charge</button></div>{subscription.payments.length ? <div className="history-list">{subscription.payments.map((payment) => <div key={payment.id}><span>{formatDate(payment.paymentDate, settings.dateFormat)}</span><strong>{formatMoney(payment.amount, subscription.currency)}</strong><em className={payment.status}>{payment.status}</em><button className="history-edit" aria-label={`Edit payment from ${payment.paymentDate}`} onClick={() => onEditPayment(payment.id)}><Pencil size={13} /></button></div>)}</div> : <p className="muted">No recorded payments yet. Add a missing charge using its real date and amount.</p>}</section>
     {subscription.priceHistory.length > 0 && <section className="detail-section"><h3>Price changes</h3><div className="price-history-list">{[...subscription.priceHistory].sort((a, b) => b.effectiveDate.localeCompare(a.effectiveDate)).map((change) => <div key={change.id}><p>Changed from {formatMoney(change.previousPrice, subscription.currency)} to {formatMoney(change.newPrice, subscription.currency)}</p><span>{formatDate(change.effectiveDate, settings.dateFormat)}</span>{change.note && <small>{change.note}</small>}</div>)}</div></section>}
     <p className="date-added">Added {new Intl.DateTimeFormat(undefined, { dateStyle: "medium" }).format(new Date(subscription.createdAt))}</p>
     <button className="danger-link" onClick={() => { if (confirm(`Delete ${subscription.name}? This cannot be undone after the undo period.`)) onDelete(); }}><Trash2 size={16} /> Delete subscription</button>
