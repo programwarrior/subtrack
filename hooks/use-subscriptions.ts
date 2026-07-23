@@ -83,7 +83,7 @@ export function useSubscriptions() {
     const hadController = Boolean(navigator.serviceWorker.controller); let reloading = false;
     const activateUpdate = () => { if (hadController && !reloading) { reloading = true; window.location.reload(); } };
     navigator.serviceWorker.addEventListener("controllerchange", activateUpdate);
-    navigator.serviceWorker.register(`${basePath}/sw.js?v=15`, { scope: `${basePath}/`, updateViaCache: "none" }).then((registration) => registration.update()).catch(() => undefined);
+    navigator.serviceWorker.register(`${basePath}/sw.js?v=16`, { scope: `${basePath}/`, updateViaCache: "none" }).then((registration) => registration.update()).catch(() => undefined);
     return () => navigator.serviceWorker.removeEventListener("controllerchange", activateUpdate);
   }, []);
 
