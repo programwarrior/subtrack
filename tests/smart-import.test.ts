@@ -13,6 +13,15 @@ describe("smart document import", () => {
   it("supports locale money and inferred metadata", () => { expect(parseMoney("€ 1.299,50")).toEqual({ amount: 1299.5, currency: "EUR" }); expect(inferCategory("Netflix Premium")).toBe("Entertainment"); expect(normalizeDate("", "yearly").inferred).toBe(true); });
   it("supports month-first and ordinal receipt dates", () => { expect(parseDateValue("Jul 4th, 2025")).toBe("2025-07-04"); expect(parseDateValue("4-Jul-25")).toBe("2025-07-04"); });
   it("supports OCR dates with spaces around separators and commas", () => { expect(parseDateValue("04 / 07 / 2025")).toBe("2025-07-04"); expect(parseDateValue("July 4,2025")).toBe("2025-07-04"); });
+
+  it("ignores a phone clock and imports repeated currency-labelled invoice payments", () => {
+    const items = parseImageReceiptText("16:01\nMy invoices\nPayment of 12/06/2025 € 9,30\nPayment of 12/05/2025 € 9,30\nPayment of 12/04/2025 € 9,30", "EUR", "IMG_8052.PNG");
+    const grouped = consolidateImportCandidates(items);
+    expect(grouped).toHaveLength(1);
+    expect(grouped[0]).toMatchObject({ name: "Imported invoices", price: 9.3, chargeCount: 3, confidence: "low" });
+    expect(grouped[0].payments?.map((payment) => [payment.paymentDate, payment.amount])).toEqual([["2025-04-12", 9.3], ["2025-05-12", 9.3], ["2025-06-12", 9.3]]);
+    expect(grouped[0].warnings).toContain("Provider name is not visible in the image. Enter it before importing.");
+  });
   it("groups differently priced charges for one merchant into one subscription", () => {
     const base = { selected: true, currency: "EUR", billingFrequency: "monthly" as const, nextPaymentDate: "2026-08-01", category: "Entertainment", note: "Imported", confidence: "high" as const, warnings: [], source: "statement.png" };
     const grouped = consolidateImportCandidates([{ ...base, id: "one", name: "Netflix", price: 10, paymentDate: "2026-05-01" }, { ...base, id: "two", name: "NETFLIX.COM", price: 14, paymentDate: "2026-06-01" }]);
