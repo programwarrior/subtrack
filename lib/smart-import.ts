@@ -212,7 +212,7 @@ function receiptMerchant(lines: string[]): string {
   return cleanMerchant(plausible ?? "").slice(0, 80);
 }
 
-const explicitMoneyPattern = /(?:€|£|\$|₹|¥|\b(?:EUR|USD|GBP|INR|CAD|AUD|JPY)\b)\s*-?\d+(?:[.,]\d{1,2})|-?\d+(?:[.,]\d{1,2})\s*(?:€|£|\$|₹|¥|\b(?:EUR|USD|GBP|INR|CAD|AUD|JPY)\b)/i;
+const explicitMoneyPattern = /(?:€|£|\$|₹|¥|\b(?:EUR|USD|GBP|INR|CAD|AUD|JPY)\b)\s*-?\d+(?:[.,]\d{1,2})?|-?\d+(?:[.,]\d{1,2})?\s*(?:€|£|\$|₹|¥|\b(?:EUR|USD|GBP|INR|CAD|AUD|JPY)\b)(?!\s*\d)/i;
 
 function explicitMoney(line: string, fallbackCurrency: string): { amount: number; currency: string } | null {
   const token = line.match(explicitMoneyPattern)?.[0];
@@ -227,7 +227,6 @@ function receiptMoney(lines: string[], fallbackCurrency: string): { amount: numb
     if (parsed?.amount) return parsed;
   }
   for (const line of lines) {
-    if (/\b(?:date|time|invoice|order|reference)\b/i.test(line) || dateTokens(line).length) continue;
     const parsed = explicitMoney(line, fallbackCurrency);
     if (parsed?.amount) return parsed;
   }
