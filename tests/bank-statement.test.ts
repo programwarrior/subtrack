@@ -33,4 +33,8 @@ describe("bank statement analysis", () => {
     const transactions = parseBankStatementRows([["Date", "Payee", "Debit"], ["2026-07-03", "Spotify", "11.99"]]); const groups = classifyBankTransactions(transactions);
     expect(groups[0]).toMatchObject({ classification: "recurring", confidence: "low", billingFrequency: "monthly" });
   });
+
+  it("does not treat generic invoice labels as bank-statement merchants", () => {
+    expect(parseBankStatementText("16:01\nPayment of 12/06/2025 € 9,30\nPayment of 12/05/2025 € 9,30", "EUR", "IMG_8052.PNG")).toEqual([]);
+  });
 });
