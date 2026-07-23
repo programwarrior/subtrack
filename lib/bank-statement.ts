@@ -34,6 +34,7 @@ const currencyHeaders = ["currency", "currency code", "ccy"];
 const recurringPattern = /\b(?:netflix|spotify|adobe|amazon prime|youtube premium|icloud|google one|dropbox|notion|canva|microsoft|office 365|github|chatgpt|openai|hosting|insurance|membership|subscription|broadband|internet|mobile plan|gym)\b/i;
 const ordinaryPattern = /\b(?:supermarket|grocery|restaurant|cafe|coffee|bakery|pharmacy|petrol|fuel|taxi|uber|atm|cash|transfer|marketplace|ikea|zara|clothing|hotel|airline|parking)\b/i;
 const nonSpendPattern = /\b(?:salary|payroll|refund|reversal|cashback|interest|deposit|received|money in|internal transfer)\b/i;
+const genericMerchantPattern = /^(?:of|payment(?:s|\s+of)?|invoice(?:s|\s+of)?|my invoices|charge|charged|paid|transaction|details?)$/i;
 const datePattern = /\b\d{4}\s*[-/.]\s*\d{1,2}\s*[-/.]\s*\d{1,2}\b|\b\d{1,2}\s*[-/.]\s*\d{1,2}\s*[-/.]\s*\d{2,4}\b|\b\d{1,2}(?:st|nd|rd|th)?\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s*,?\s*\d{2,4}\b|\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{1,2}(?:st|nd|rd|th)?\s*,?\s*\d{2,4}\b/i;
 const moneyPattern = /(?:€|£|\$|₹|\b(?:EUR|USD|GBP|INR|CAD|AUD|JPY)\b)?\s*\(?-?\d+(?:[.,]\d{1,2})\)?(?:\s*\b(?:EUR|USD|GBP|INR|CAD|AUD|JPY)\b)?/gi;
 
@@ -83,7 +84,7 @@ export function parseBankStatementText(text: string, fallbackCurrency = "EUR", s
     const withoutDate = token ? line.replace(token, " ") : line; const moneyMatches = [...withoutDate.matchAll(moneyPattern)]; if (!moneyMatches.length || !activeDate) return;
     const match = moneyMatches.find((candidate) => /[€£$₹]|\b(?:EUR|USD|GBP|INR|CAD|AUD|JPY)\b|[.,]\d{1,2}\b/i.test(candidate[0])) ?? moneyMatches[0]; const money = parseMoney(match[0], fallbackCurrency); if (!money?.amount) return;
     const before = withoutDate.slice(0, match.index ?? 0); const after = withoutDate.slice((match.index ?? 0) + match[0].length); const merchant = cleanStatementMerchant(before.length >= 2 ? before : after);
-    if (!merchant || !/[a-z]{2}/i.test(merchant) || nonSpendPattern.test(merchant)) return;
+    if (!merchant || !/[a-z]{2}/i.test(merchant) || nonSpendPattern.test(merchant) || genericMerchantPattern.test(merchant)) return;
     transactions.push({ id: uid(), merchant, amount: money.amount, currency: money.currency, date: activeDate, direction: signedDirection(match[0], line), source, sourceId: `${source}:line-${index + 1}` });
   });
   return transactions;
