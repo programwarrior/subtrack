@@ -95,6 +95,26 @@ test("groups repeated imported charges into one subscription", async ({ page }) 
   await expect(page.getByRole("dialog")).toContainText("01/08/2026");
 });
 
+test("classifies bank statement spending before importing subscriptions", async ({ page }) => {
+  await page.getByRole("button", { name: "Smart import" }).first().click();
+  await page.locator('input[type="file"]').setInputFiles({
+    name: "bank-statements.csv",
+    mimeType: "text/csv",
+    buffer: Buffer.from("Booking date,Description,Amount,Currency\n2026-03-05,Netflix,-15.99,EUR\n2026-04-05,NETFLIX.COM,-15.99,EUR\n2026-05-06,Netflix payment,-17.99,EUR\n2026-04-03,Fresh Grocery Market,-42.10,EUR\n2026-04-11,Fresh Grocery Market,-18.40,EUR\n2026-04-09,Design Studio,-25.00,EUR\n2026-05-17,Design Studio,-60.00,EUR"),
+  });
+  await expect(page.getByText(/1 likely subscription/).first()).toBeVisible();
+  await expect(page.getByText("1 need review", { exact: true })).toBeVisible();
+  await expect(page.getByText("1 normal spending", { exact: true })).toBeVisible();
+  await expect(page.getByText("Fresh Grocery Market", { exact: true })).toBeVisible();
+  const designRow = page.getByRole("article").filter({ hasText: "Design Studio" });
+  await expect(designRow.getByText("Needs review", { exact: true })).toBeVisible();
+  await designRow.getByRole("button", { name: "Add as subscription" }).click();
+  await expect(page.getByRole("button", { name: "Import 2 subscriptions" })).toBeEnabled();
+  await page.getByRole("button", { name: "Import 2 subscriptions" }).click();
+  await expect(page.getByRole("article").filter({ hasText: "Netflix" })).toBeVisible();
+  await expect(page.getByRole("article").filter({ hasText: "Design Studio" })).toBeVisible();
+});
+
 test("shows safe account login without device pairing", async ({ page }) => {
   await page.getByRole("button", { name: "Settings" }).click();
   await expect(page.getByText("Sign in to sync everywhere")).toBeVisible();
