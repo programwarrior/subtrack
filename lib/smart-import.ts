@@ -212,18 +212,44 @@ function receiptMerchant(lines: string[]): string {
   return cleanMerchant(plausible ?? "").slice(0, 80);
 }
 
+const explicitMoneyPattern = /(?:€|£|\$|₹|¥|\b(?:EUR|USD|GBP|INR|CAD|AUD|JPY)\b)\s*-?\d+(?:[.,]\d{1,2})|-?\d+(?:[.,]\d{1,2})\s*(?:€|£|\$|₹|¥|\b(?:EUR|USD|GBP|INR|CAD|AUD|JPY)\b)/i;
+
+function explicitMoney(line: string, fallbackCurrency: string): { amount: number; currency: string } | null {
+  const token = line.match(explicitMoneyPattern)?.[0];
+  return token ? parseMoney(token, fallbackCurrency) : null;
+}
+
 function receiptMoney(lines: string[], fallbackCurrency: string): { amount: number; currency: string } | null {
   const labelledIndexes = lines.map((line, index) => ({ index, score: /\bamount\b/i.test(line) ? 100 : /\btotal\b/i.test(line) ? 90 : /\b(?:paid|charged|charge)\b/i.test(line) ? 50 : 0 })).filter((item) => item.score).sort((a, b) => b.score - a.score || b.index - a.index);
   for (const { index } of labelledIndexes) {
-    const parsed = parseMoney(`${lines[index]} ${lines[index + 1] ?? ""}`, fallbackCurrency);
+    const context = `${lines[index]} ${lines[index + 1] ?? ""}`;
+    const parsed = explicitMoney(context, fallbackCurrency) ?? parseMoney(context, fallbackCurrency);
     if (parsed?.amount) return parsed;
   }
   for (const line of lines) {
     if (/\b(?:date|time|invoice|order|reference)\b/i.test(line) || dateTokens(line).length) continue;
+    const parsed = explicitMoney(line, fallbackCurrency);
+    if (parsed?.amount) return parsed;
+  }
+  for (const line of lines) {
+    if (/\b(?:date|time|invoice|order|reference)\b/i.test(line) || dateTokens(line).length || /\b\d{1,2}:\d{2}(?::\d{2})?\b/.test(line) || !/\d+[.,]\d{1,2}\b/.test(line)) continue;
     const parsed = parseMoney(line, fallbackCurrency);
     if (parsed?.amount) return parsed;
   }
   return null;
+}
+
+function parseRepeatedInvoiceRows(lines: string[], fallbackCurrency: string, source: string): SmartImportCandidate[] {
+  const extracted = lines.flatMap((line) => {
+    if (!/\b(?:payment|paid|charged|charge|invoice|debit)\b/i.test(line)) return [];
+    const paymentDate = parseDateValue(dateTokens(line)[0] ?? ""); const money = explicitMoney(line, fallbackCurrency);
+    if (!paymentDate || paymentDate > todayDateOnly() || !money?.amount) return [];
+    return [{ paymentDate, money }];
+  });
+  if (extracted.length < 2) return [];
+  const inferredName = receiptMerchant(lines); const genericName = !inferredName || /\b(?:my\s+)?invoices?\b|\bpayments?\b/i.test(inferredName); const name = genericName ? "Imported invoices" : inferredName;
+  const frequency = inferFrequency(lines.join(" ")); const warnings = ["Billing frequency was inferred from the dated charges.", ...(genericName ? ["Provider name is not visible in the image. Enter it before importing."] : [])];
+  return extracted.map(({ paymentDate, money }) => candidate({ name, price: money.amount, currency: money.currency, billingFrequency: frequency, nextPaymentDate: nextRenewalFromCharge(paymentDate, frequency), paymentDate, firstPaymentDate: paymentDate, source, note: `Imported payment from ${source}`, warnings, confidence: genericName ? "low" : "medium" }));
 }
 
 function parseImageTransactionRows(lines: string[], fallbackCurrency: string, source: string): SmartImportCandidate[] {
@@ -243,6 +269,8 @@ function parseImageTransactionRows(lines: string[], fallbackCurrency: string, so
 export function parseImageReceiptText(text: string, fallbackCurrency = "EUR", source = "Receipt image"): SmartImportCandidate[] {
   const lines = text.split(/\n+/).map((line) => line.trim()).filter((line) => line.length > 1);
   if (!lines.length) return [];
+  const repeatedInvoices = parseRepeatedInvoiceRows(lines, fallbackCurrency, source);
+  if (repeatedInvoices.length) return repeatedInvoices;
   const transactionRows = parseImageTransactionRows(lines, fallbackCurrency, source);
   if (transactionRows.length) return transactionRows;
   const direct = parseDocumentText(text, fallbackCurrency, source);
