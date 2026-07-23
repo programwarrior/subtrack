@@ -22,6 +22,12 @@ describe("smart document import", () => {
     expect(grouped[0].payments?.map((payment) => [payment.paymentDate, payment.amount])).toEqual([["2025-04-12", 9.3], ["2025-05-12", 9.3], ["2025-06-12", 9.3]]);
     expect(grouped[0].warnings).toContain("Provider name is not visible in the image. Enter it before importing.");
   });
+
+  it("accepts a currency-labelled whole-number payment without reading the phone clock", () => {
+    const items = parseImageReceiptText("16:01\nSpotify\nPayment of 12/06/2025 € 7", "EUR", "whole-euro.PNG");
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({ name: "Spotify", price: 7, paymentDate: "2025-06-12", currency: "EUR" });
+  });
   it("groups differently priced charges for one merchant into one subscription", () => {
     const base = { selected: true, currency: "EUR", billingFrequency: "monthly" as const, nextPaymentDate: "2026-08-01", category: "Entertainment", note: "Imported", confidence: "high" as const, warnings: [], source: "statement.png" };
     const grouped = consolidateImportCandidates([{ ...base, id: "one", name: "Netflix", price: 10, paymentDate: "2026-05-01" }, { ...base, id: "two", name: "NETFLIX.COM", price: 14, paymentDate: "2026-06-01" }]);
